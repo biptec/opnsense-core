@@ -47,7 +47,6 @@ function explode_assoc($delimiter, $string)
     return $result;
 }
 
-
 function return_hex_ipv4($ipv4)
 {
     if (!is_ipaddrv4($ipv4)) {
@@ -982,9 +981,10 @@ function interface_ppps_configure($interface)
             }
         }
     }
-    $localips = isset($ppp['localip']) ? explode(',', $ppp['localip']) : array();
-    $gateways = isset($ppp['gateway']) ? explode(',', $ppp['gateway']) : array();
-    $subnets = isset($ppp['subnet']) ? explode(',', $ppp['subnet']) : array();
+    $localips = isset($ppp['localip']) ? explode(',', $ppp['localip']) : [];
+    $gateways = isset($ppp['gateway']) ? explode(',', $ppp['gateway']) : [];
+    $subnets = isset($ppp['subnet']) ? explode(',', $ppp['subnet']) : [];
+    $mtus = !empty($ppp['mtu']) ? explode(',', $ppp['mtu']) : [];
 
     /*
      * We bring up the parent interface first because if DHCP is configured on the parent we need
@@ -992,14 +992,11 @@ function interface_ppps_configure($interface)
      */
     foreach ($ports as $pid => $port) {
         switch ($ppp['type']) {
-            case "pppoe":
-                /* Bring the parent interface up */
+            case 'pppoe':
                 interfaces_bring_up($port);
-                /* Enable setautosrc to automatically change mac address if parent interface's changes */
-                mwexecf('/usr/sbin/ngctl msg %s: setautosrc 1', array($port));
                 break;
-            case "pptp":
-            case "l2tp":
+            case 'pptp':
+            case 'l2tp':
                 /* configure interface */
                 if (is_ipaddr($localips[$pid])) {
                     // Manually configure interface IP/subnet
@@ -1011,15 +1008,15 @@ function interface_ppps_configure($interface)
 
                 if (!is_ipaddr($localips[$pid])) {
                     log_msg("Could not get a Local IP address for PPTP/L2TP link on {$port}. Using 0.0.0.0!", LOG_WARNING);
-                    $localips[$pid] = "0.0.0.0";
+                    $localips[$pid] = '0.0.0.0';
                 }
                 if (!is_ipaddr($gateways[$pid])) {
                     log_msg("Could not get a Remote IP address for PPTP/L2TP link on {$port}.", LOG_WARNING);
                     return;
                 }
                 break;
-            case "ppp":
-                if (!file_exists("{$port}")) {
+            case 'ppp':
+                if (!file_exists($port)) {
                     log_msg("Device {$port} does not exist. PPP link cannot start without the modem device.", LOG_ERR);
                     return;
                 }
@@ -1123,7 +1120,7 @@ EOD;
         $mpdconf .= "  set ipcp enable req-sec-dns\n";
     }
     foreach ($ports as $pid => $port) {
-        $mpdconf_arr = array();
+        $mpdconf_arr = [];
         $port = get_real_interface($port);
         if ($ppp['type'] == "ppp") {
             $mpdconf_arr[] = "create link static {$interface}_link{$pid} modem";
@@ -1155,17 +1152,16 @@ EOD;
             $mpdconf_arr[] = "set link bandwidth {$bandwidths[$pid]}";
         }
 
-        $mtus = !empty($ppp['mtu']) ? explode(',', $ppp['mtu']) : null;
         if (empty($mtus[$pid])) {
-            $mtus[$pid] = !empty($ifcfg['mtu']) ? intval($ifcfg['mtu']) : 1500;
+            /* subtract default header when deriving from interface config (as shown there) */
+            $mtus[$pid] = !empty($ifcfg['mtu']) ? intval($ifcfg['mtu']) - 8 : 1492;
         }
-        if ($ppp['type'] == "pppoe" && $mtus[$pid] > 1500) {
-            // use pppoe max-payload if mtu we're about to set > 1492
-            $mpdconf_arr[] = "set pppoe max-payload " . ($mtus[$pid] - 8);
+        if ($ppp['type'] == 'pppoe' && $mtus[$pid] > 1492) {
+            $mpdconf_arr[] = "set pppoe max-payload " . $mtus[$pid];
         } else {
-            $mpdconf_arr[] = "set link mtu " . ($mtus[$pid] - 8);
+            $mpdconf_arr[] = "set link mtu " . $mtus[$pid];
         }
-        $mrus = !empty($ppp['mtu']) ? explode(',', $ppp['mru']) : null;
+        $mrus = !empty($ppp['mru']) ? explode(',', $ppp['mru']) : null;
         if (!empty($mrus[$pid])) {
             $mpdconf_arr[] = "set link mru {$mrus[$pid]}";
         }
@@ -1265,7 +1261,7 @@ EOD;
     /* fire up mpd */
     mwexecf(
         '/usr/local/sbin/mpd5 -b -d /var/etc -f %s -p %s -s ppp %s',
-        array("mpd_{$interface}.conf", "/var/run/{$ppp['type']}_{$interface}.pid", "{$ppp['type']}client")
+        ["mpd_{$interface}.conf", "/var/run/{$ppp['type']}_{$interface}.pid", "{$ppp['type']}client"]
     );
 
     /* appease netgraph by setting the correct node name */
@@ -1280,6 +1276,20 @@ EOD;
         }
         sleep(1);
         $i++;
+    }
+
+    switch ($ppp['type']) {
+        case 'pppoe':
+            /* automatically change MAC address if parent interface changes */
+            $ng_name = preg_replace('/[.:]/', '_', $ports[0]) . ':';
+            mwexecf('/usr/sbin/ngctl msg %s setautosrc 1', [$ng_name]);
+            /* FALLTHROUGH */
+        case 'l2tp':
+        case 'pptp':
+            legacy_interface_mtu($ifcfg['if'], $mtus[0]);
+            /* FALLTHROUGH */
+        default:
+            break;
     }
 }
 
@@ -2165,6 +2175,32 @@ function interfaces_addresses_flush($realif, $family = 4, $ifconfig_details = nu
     }
 }
 
+function interface_configure_mtu($device, $mtu, $ifconfig_details)
+{
+    global $config;
+
+    if (strstr($device, 'vlan') || strstr($device, 'qinq')) {
+        $parent_device = interface_parent_devices($device)[0];
+        $parent_mtu = $mtu + 4;
+        $force = false;
+
+        $parent_cfg = $config['interfaces'][convert_real_interface_to_friendly_interface_name($parent_device)] ?? [];
+        if (isset($parent_cfg['enable']) && !empty($parent_cfg['mtu'])) {
+            $parent_mtu = $parent_cfg['mtu'];
+            $force = true;
+        }
+
+        if ($force || $mtu > $ifconfig_details[$parent_device]['mtu']) {
+            /* configure parent MTU recursively to avoid a fail for current device MTU requirement */
+            interface_configure_mtu($parent_device, $parent_mtu, $ifconfig_details);
+        }
+    }
+
+    if ($mtu != $ifconfig_details[$device]['mtu']) {
+        legacy_interface_mtu($device, $mtu);
+    }
+}
+
 function interface_configure($verbose = false, $interface = 'wan', $reload = false, $linkup = false)
 {
     global $config;
@@ -2271,6 +2307,10 @@ function interface_configure($verbose = false, $interface = 'wan', $reload = fal
     /* apply interface hardware settings (tso, lro, ..) */
     configure_interface_hardware($realhwif, $ifconfig_details);
 
+    if (!empty($wancfg['mtu']) && strpos($realhwif, '/') === false) {
+        interface_configure_mtu($realhwif, $wancfg['mtu'], $ifconfig_details);
+    }
+
     switch ($wancfg['ipaddr'] ?? '') {
         case 'dhcp':
             interface_dhcp_configure($interface);
@@ -2334,28 +2374,6 @@ function interface_configure($verbose = false, $interface = 'wan', $reload = fal
      */
     if ($realif != $realifv6) {
         mwexecf('/sbin/ifconfig %s inet6 description %s up', [$realifv6, $interface_descr]);
-    }
-
-    if (!empty($wancfg['mtu'])) {
-        $intf_details = $ifconfig_details[$realhwif];
-        $mtu = $wancfg['mtu'];
-
-        if (strstr($realif, 'vlan') || strstr($realif, 'qinq')) {
-            $parent_realif = interface_parent_devices($interface)[0];
-            $parent_details = $ifconfig_details[$parent_realif];
-
-            /* configure parent MTU now to avoid silent fail for current interface MTU change */
-            $parentcfg = $config['interfaces'][convert_real_interface_to_friendly_interface_name($parent_realif)];
-            if (isset($parentcfg['enable']) && !empty($parentcfg['mtu'])) {
-                if ($parentcfg['mtu'] != $parent_details['mtu']) {
-                    legacy_interface_mtu($parent_realif, $parentcfg['mtu']);
-                }
-            }
-        }
-
-        if ($mtu != $intf_details['mtu']) {
-            legacy_interface_mtu($realif, $mtu);
-        }
     }
 
     interfaces_vips_configure($interface);
@@ -2715,10 +2733,9 @@ function interface_dhcpv6_configure($interface, $wancfg)
     killbypid('/var/run/rtsold.pid');
 
     $rtsoldcommand = exec_safe(
-        '/usr/sbin/rtsold -p %s -M %s -O %s -R %s -a -u',
+        '/usr/sbin/rtsold -p %s -A %s -R %s -a -u',
         array(
             '/var/run/rtsold.pid',
-            '/var/etc/rtsold_script.sh',
             '/var/etc/rtsold_script.sh',
             '/usr/local/opnsense/scripts/interfaces/rtsold_resolvconf.sh',
         )
@@ -3433,23 +3450,21 @@ function get_ppp_parent($ifcfg_if)
 }
 
 /* collect hardware device parents for VLAN, LAGG and bridges */
-function interface_parent_devices($interface)
+function interface_parent_devices($device)
 {
     $parents = [];
 
-    $realif = get_real_interface($interface);
-
-    if (strstr($realif, 'vlan') || strstr($realif, 'qinq')) {
+    if (strstr($device, 'vlan') || strstr($device, 'qinq')) {
         /* XXX maybe if we have a qinq type return both parents? */
         foreach (config_read_array('vlans', 'vlan') as $vlan) {
-            if ($realif == $vlan['vlanif']) {
+            if ($device == $vlan['vlanif']) {
                 $parents[] = $vlan['if'];
                 break;
             }
         }
-    } elseif (strstr($realif, 'bridge')) {
+    } elseif (strstr($device, 'bridge')) {
         foreach (config_read_array('bridges', 'bridged') as $bridge) {
-            if ($realif == $bridge['bridgeif']) {
+            if ($device == $bridge['bridgeif']) {
                 foreach (explode(',', $bridge['members']) as $member) {
                     /* bridge stores members as configured interfaces */
                     $parents[] = get_real_interface($member);
@@ -3457,9 +3472,9 @@ function interface_parent_devices($interface)
                 break;
             }
         }
-    } elseif (strstr($realif, 'lagg')) {
+    } elseif (strstr($device, 'lagg')) {
         foreach (config_read_array('laggs', 'lagg') as $lagg) {
-            if ($realif == $lagg['laggif']) {
+            if ($device == $lagg['laggif']) {
                 foreach (explode(',', $lagg['members']) as $member) {
                     $parents[] = $member;
                 }
