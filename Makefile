@@ -29,11 +29,11 @@ all:
 .include "Mk/defaults.mk"
 
 CORE_ABI?=	23.7
-CORE_MESSAGE?=	Carry on my wayward son
-CORE_NAME?=	opnsense-devel
+CORE_MESSAGE?=	Beep! Beep!
+CORE_NAME?=	opnsense
 # adjust src/root/boot/lua/logo-hourglass.lua.in accordingly:
-CORE_NICKNAME?=	Not Yet
-CORE_TYPE?=	development
+CORE_NICKNAME?=	Restless Roadrunner
+CORE_TYPE?=	community
 
 .for REPLACEMENT in ABI PHP PYTHON
 . if empty(CORE_${REPLACEMENT})
@@ -129,7 +129,7 @@ CORE_COPYRIGHT_YEARS?=	2014-2023
 CORE_DEPENDS_aarch64?=	py${CORE_PYTHON}-duckdb \
 			py${CORE_PYTHON}-numpy \
 			py${CORE_PYTHON}-pandas \
-			suricata-devel
+			suricata
 
 CORE_DEPENDS_amd64?=	beep \
 			${CORE_DEPENDS_aarch64}
