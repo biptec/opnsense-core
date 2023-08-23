@@ -380,6 +380,7 @@
 /usr/local/opnsense/mvc/app/controllers/OPNsense/IPsec/forms/dialogVTI.xml
 /usr/local/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/LaggSettingsController.php
 /usr/local/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/LoopbackSettingsController.php
+/usr/local/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/SettingsController.php
 /usr/local/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/VipSettingsController.php
 /usr/local/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/VlanSettingsController.php
 /usr/local/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/VxlanSettingsController.php
@@ -556,6 +557,7 @@
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/InterfaceField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/JsonKeyValueStoreField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/LegacyLinkField.php
+/usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/MacaddrField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/ModelRelationField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/NetworkAliasField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/FieldTypes/NetworkField.php
@@ -577,6 +579,7 @@
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/Validators/CsvListValidator.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/Validators/HostValidator.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/Validators/IntegerValidator.php
+/usr/local/opnsense/mvc/app/models/OPNsense/Base/Validators/MacaddrValidator.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/Validators/MinMaxValidator.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Base/Validators/NetworkValidator.php
 /usr/local/opnsense/mvc/app/models/OPNsense/CaptivePortal/ACL/ACL.xml
@@ -660,10 +663,15 @@
 /usr/local/opnsense/mvc/app/models/OPNsense/IPsec/Swanctl.php
 /usr/local/opnsense/mvc/app/models/OPNsense/IPsec/Swanctl.xml
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/ACL/ACL.xml
+/usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/ArrayField.php
+/usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/GatewayField.php
+/usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/IfaceInterfaceField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/LaggInterfaceField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/VipInterfaceField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/VipNetworkField.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/FieldTypes/VlanInterfaceField.php
+/usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/Iface.php
+/usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/Iface.xml
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/Lagg.php
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/Lagg.xml
 /usr/local/opnsense/mvc/app/models/OPNsense/Interfaces/Loopback.php
@@ -966,6 +974,7 @@
 /usr/local/opnsense/scripts/interfaces/ppp-linkup.sh
 /usr/local/opnsense/scripts/interfaces/ppp-rename.sh
 /usr/local/opnsense/scripts/interfaces/ppp-uptime.sh
+/usr/local/opnsense/scripts/interfaces/reconfigure.php
 /usr/local/opnsense/scripts/interfaces/reconfigure_laggs.php
 /usr/local/opnsense/scripts/interfaces/reconfigure_vips.php
 /usr/local/opnsense/scripts/interfaces/reconfigure_vlans.php
