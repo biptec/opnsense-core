@@ -28,15 +28,12 @@
 
 namespace OPNsense\Interfaces;
 
-use Phalcon\Messages\Message;
 use OPNsense\Base\BaseModel;
 use OPNsense\Core\Config;
+use Phalcon\Messages\Message;
 
 class Vlan extends BaseModel
 {
-    /**
-     * {@inheritdoc}
-     */
     public function performValidation($validateFullModel = false)
     {
         // current uuid / device name mapping
@@ -45,8 +42,8 @@ class Vlan extends BaseModel
         if (isset($cfg->vlans->vlan)) {
             foreach ($cfg->vlans->children() as $vlan) {
                 if (isset($vlan->attributes()->uuid)) {
-                    $tagUUID = (string)$vlan->attributes()['uuid'];
-                    $prev_names[$tagUUID] = (string)$vlan->vlanif;
+                    $tagUUID = (string) $vlan->attributes()['uuid'];
+                    $prev_names[$tagUUID] = (string) $vlan->vlanif;
                 }
             }
         }
@@ -59,20 +56,20 @@ class Vlan extends BaseModel
                 // perform plugin specific validations
                 switch ($node->getInternalXMLTagName()) {
                     case 'vlanif':
-                        $prefix = (strpos((string)$parent->if, 'vlan') === false ? 'vlan' : 'qinq');
-                        if ((string)$node == "{$parent->if}_vlan{$parent->tag}") {
+                        $prefix = (false === strpos((string) $parent->if, 'vlan') ? 'vlan' : 'qinq');
+                        if ((string) $node == "{$parent->if}_vlan{$parent->tag}") {
                             // legacy device name
                             break;
-                        } elseif (!(strpos((string)$node, (string)$prefix) === 0)) {
+                        } elseif (!(0 === strpos((string) $node, (string) $prefix))) {
                             $messages->appendMessage(new Message(
-                                sprintf(gettext('The device name prefix "%s" is required.'), (string)$prefix),
+                                sprintf(gettext('The device name prefix "%s" is required.'), (string) $prefix),
                                 $key
                             ));
-                        } elseif (!preg_match("/^{$prefix}0([0-9\.]){1,10}$/", (string)$node)) {
+                        } elseif (!preg_match("/^{$prefix}([0-9\.]){1,10}$/", (string) $node)) {
                             $messages->appendMessage(new Message(
                                 sprintf(
                                     gettext(
-                                        'Only a maximum of 15 characters is allowed starting with "%s0" combined with ' .
+                                        'Only a maximum of 15 characters is allowed starting with "%s0" combined with '.
                                         'numeric characters and dots, e.g. "%s0.1.104".'
                                     ),
                                     $prefix,
@@ -81,7 +78,8 @@ class Vlan extends BaseModel
                                 $key
                             ));
                         }
-                    /* FALLTHROUGH */
+                        /* FALLTHROUGH */
+                        // no break
                     case 'if':
                         /*
                          * Detect attempt to assign the device to itself.
@@ -89,13 +87,14 @@ class Vlan extends BaseModel
                          * that case.
                          */
                         $prev_name = $prev_names[$parent->getAttributes()['uuid']] ?? '';
-                        if ((string)$parent->if == (string)$parent->vlanif || $prev_name == (string)$parent->if) {
+                        if ((string) $parent->if == (string) $parent->vlanif || $prev_name == (string) $parent->if) {
                             $messages->appendMessage(new Message(gettext('VLAN can not be assigned to itself.'), $key));
                         }
                         break;
                 }
             }
         }
+
         return $messages;
     }
 }

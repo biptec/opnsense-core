@@ -239,11 +239,11 @@
                     </check001>
                 </Constraints>
             </subnetv6>
-            <gateway6 type=".\GatewayField">
+            <gatewayv6 type=".\GatewayField">
                 <Required>N</Required>
                 <AddressFamily>ipv6</AddressFamily>
                 <EmptyValueLabel>Auto-detect</EmptyValueLabel>
-            </gateway6>
+            </gatewayv6>
 
             <!-- IPv6: DHCP6 -->
             <dhcp6prefixonly type="BooleanField">
