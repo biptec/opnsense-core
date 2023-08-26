@@ -188,7 +188,7 @@ class Iface extends BaseModel
                         break;
                 }
 
-                if ('' != $value) {
+                if (empty($value)) {
                     $newChild->addChild($key, $value);
                 }
             }
