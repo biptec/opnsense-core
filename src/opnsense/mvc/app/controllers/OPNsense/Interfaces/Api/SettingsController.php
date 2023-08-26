@@ -172,10 +172,7 @@ class SettingsController extends ApiMutableModelControllerBase
 
     private function normalizeNode(&$node)
     {
-        foreach ($node as $key => $value) {
-            if (empty($value)) {
-                unset($node[$key]);
-            }
-        }
+        unset($node['virtual']);
+        unset($node['internal_dynamic']);
     }
 }
