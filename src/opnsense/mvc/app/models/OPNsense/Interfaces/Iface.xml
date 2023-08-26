@@ -23,20 +23,20 @@
             </descr>
             <enable type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </enable>
             <lock type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </lock>
 
             <blockbogons type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </blockbogons>
             <blockpriv type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </blockpriv>
 
             <!-- Loopback Interface -->
@@ -61,11 +61,11 @@
             </mss>
             <promisc type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </promisc>
             <gateway_interface type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </gateway_interface>
 
             <!-- IPv4: Type -->
@@ -254,7 +254,7 @@
             <!-- IPv6: DHCP6 -->
             <dhcp6prefixonly type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </dhcp6prefixonly>
             <dhcp6-ia-pd-len type="IntegerField">
                 <Required>N</Required>
@@ -263,11 +263,11 @@
             </dhcp6-ia-pd-len>
             <dhcp6-ia-pd-send-hint type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </dhcp6-ia-pd-send-hint>
             <dhcp6usev4iface type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </dhcp6usev4iface>
             <dhcp6vlanprio type="OptionField">
                 <Required>Y</Required>
@@ -377,7 +377,7 @@
             </track6-prefix-id>
             <dhcpd6track6allowoverride type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
+                <default>false</default>
             </dhcpd6track6allowoverride>
         </interface>
     </items>
