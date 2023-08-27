@@ -1965,6 +1965,7 @@
 /usr/local/sbin/carp_service_status
 /usr/local/sbin/configctl
 /usr/local/sbin/ifctl
+/usr/local/sbin/opnsense-apikey
 /usr/local/sbin/opnsense-beep
 /usr/local/sbin/opnsense-crypt
 /usr/local/sbin/opnsense-importer
