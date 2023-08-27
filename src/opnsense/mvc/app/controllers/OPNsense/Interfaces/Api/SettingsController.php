@@ -37,6 +37,9 @@ class SettingsController extends ApiMutableModelControllerBase
     protected static $internalModelName = 'interface';
     protected static $internalModelClass = 'OPNsense\Interfaces\Iface';
 
+    private $applyConfigPath = '/tmp/.interfaces.apply';
+    private $dirtyPath = '/tmp/interfaces.dirty';
+
     public function searchItemAction()
     {
         return $this->searchBase('interface', ['if', 'descr', 'ipaddr', 'subnet', 'ipaddrv6', 'subnetv6'], 'if');
@@ -108,16 +111,6 @@ class SettingsController extends ApiMutableModelControllerBase
         return $result;
     }
 
-    public function reconfigureAction()
-    {
-        $result = ['status' => 'failed'];
-        if ($this->request->isPost()) {
-            $result['status'] = strtolower(trim((new Backend())->configdRun('interface configure')));
-        }
-
-        return $result;
-    }
-
     protected function getModelNodes()
     {
         $nodes = &$this->getModel()->getNodes();
@@ -137,14 +130,26 @@ class SettingsController extends ApiMutableModelControllerBase
         return $nodes;
     }
 
+    public function reconfigureAction()
+    {
+        $result = ['status' => 'failed'];
+        if ($this->request->isPost()) {
+            $bckresult = strtolower(trim((new Backend())->configdRun('interface configure')));
+            if ('ok' === $bckresult) {
+                $result['message'] = gettext('The changes have been applied successfully.');
+                $result['status'] = 'ok';
+                @unlink($this->dirtyPath);
+            }
+        }
+
+        return $result;
+    }
+
     // log changes for apply action
     private function updateApplyList($uuid)
     {
-        $applyLogPath = '/tmp/.interfaces.apply';
-        $dirtyPath = '/tmp/interfaces.dirty';
-
-        if (file_exists($applyLogPath)) {
-            $toapplylist = unserialize(file_get_contents($applyLogPath));
+        if (file_exists($this->applyConfigPath)) {
+            $toapplylist = unserialize(file_get_contents($this->applyConfigPath));
         } else {
             $toapplylist = [];
         }
@@ -165,9 +170,9 @@ class SettingsController extends ApiMutableModelControllerBase
         $toapplylist[$if]['ifcfg']['realif'] = (string) $node->if;
         $toapplylist[$if]['ifcfg']['realifv6'] = (string) $node->if;
 
-        file_put_contents($applyLogPath, serialize($toapplylist));
+        file_put_contents($this->applyConfigPath, serialize($toapplylist));
 
-        touch($dirtyPath);
+        touch($this->dirtyPath);
     }
 
     private function normalizeNode(&$node)

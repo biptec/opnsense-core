@@ -55,4 +55,3 @@ if (!is_subsystem_dirty('interfaces')) {
         rrd_configure();
     }
 }
-@unlink('/tmp/.interfaces.apply');

@@ -18,25 +18,24 @@
                     </check002>
                 </Constraints>
             </if>
+            <id type="TextField">
+                <Required>N</Required>
+            </id>
             <descr type="TextField">
                 <Required>N</Required>
             </descr>
             <enable type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </enable>
             <lock type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </lock>
 
             <blockbogons type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </blockbogons>
             <blockpriv type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </blockpriv>
 
             <!-- Loopback Interface -->
@@ -51,6 +50,7 @@
                 <MinimumValue>576</MinimumValue>
                 <MaximumValue>1500</MaximumValue>
                 <Required>N</Required>
+                <Default>1500</Default>
             </mtu>
             <spoofmac type="MacaddrField">
                 <Required>N</Required>
@@ -61,16 +61,14 @@
             </mss>
             <promisc type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </promisc>
             <gateway_interface type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </gateway_interface>
 
             <!-- IPv4: Type -->
             <type type="OptionField">
-                <Required>Y</Required>
+                <Required>N</Required>
                 <default>none</default>
                 <OptionValues>
                     <none value="none">None</none>
@@ -195,7 +193,7 @@
 
             <!-- IPv6: Type -->
             <type6 type="OptionField">
-                <Required>Y</Required>
+                <Required>N</Required>
                 <default>none</default>
                 <OptionValues>
                     <none value="none">None</none>
@@ -254,7 +252,6 @@
             <!-- IPv6: DHCP6 -->
             <dhcp6prefixonly type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </dhcp6prefixonly>
             <dhcp6-ia-pd-len type="IntegerField">
                 <Required>N</Required>
@@ -263,15 +260,12 @@
             </dhcp6-ia-pd-len>
             <dhcp6-ia-pd-send-hint type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </dhcp6-ia-pd-send-hint>
             <dhcp6usev4iface type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </dhcp6usev4iface>
             <dhcp6vlanprio type="OptionField">
-                <Required>Y</Required>
-                <default>0</default>
+                <Required>N</Required>
                 <OptionValues>
                     <dhcp6vlanprio1 value="1">Background (1, lowest)</dhcp6vlanprio1>
                     <dhcp6vlanprio0 value="0">Best Effort (0, default)</dhcp6vlanprio0>
@@ -282,6 +276,7 @@
                     <dhcp6vlanprio6 value="6">Internetwork Control (6)</dhcp6vlanprio6>
                     <dhcp6vlanprio7 value="7">Network Control (7, highest)</dhcp6vlanprio7>
                 </OptionValues>
+                <Default>0</Default>
             </dhcp6vlanprio>
             <adv_dhcp6_interface_statement_information_only_enable type="BooleanField">
                 <Required>N</Required>
@@ -297,6 +292,7 @@
             </adv_dhcp6_interface_statement_script>
             <adv_dhcp6_id_assoc_statement_address_enable type="BooleanField">
                 <Required>N</Required>
+
             </adv_dhcp6_id_assoc_statement_address_enable>
             <adv_dhcp6_id_assoc_statement_address type="TextField">
                 <Required>N</Required>
@@ -312,6 +308,7 @@
             </adv_dhcp6_id_assoc_statement_address_vltime>
             <adv_dhcp6_id_assoc_statement_prefix_enable type="BooleanField">
                 <Required>N</Required>
+
             </adv_dhcp6_id_assoc_statement_prefix_enable>
             <adv_dhcp6_id_assoc_statement_prefix type="TextField">
                 <Required>N</Required>
@@ -377,7 +374,6 @@
             </track6-prefix-id>
             <dhcpd6track6allowoverride type="BooleanField">
                 <Required>N</Required>
-                <default>0</default>
             </dhcpd6track6allowoverride>
         </interface>
     </items>

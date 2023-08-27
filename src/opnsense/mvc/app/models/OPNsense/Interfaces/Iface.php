@@ -113,9 +113,17 @@ class Iface extends BaseModel
                         break;
                 }
 
-                $newChild->addChild($key, $value);
+                switch ($key) {
+                    case 'type':
+                    case 'type6':
+                        $value = '';
+                        break;
+                    default:
+                        $newChild->addChild($key, $value);
+                }
             }
 
+            $newChild->addChild('id', $ifname);
             $newChild->addChild('type', $type);
             $newChild->addChild('type6', $type6);
         }
@@ -186,10 +194,20 @@ class Iface extends BaseModel
                             $value = $ipaddrv6;
                         }
                         break;
+
+                    case 'dhcp6vlanprio':
+                        // don't clear the value if it has the value `0` because it is an option field
+                        break;
+
+                    default:
+                        // prevent storing the value `0` in the configuration
+                        if (0 == (string) $value) {
+                            $value = '';
+                        }
                 }
 
-                if (!empty($value)) {
-                    $newChild->addChild($key, $value);
+                if ('' != (string) $value) {
+                    $newChild->addChild($key, (string) $value);
                 }
             }
         }
