@@ -31,43 +31,85 @@ require_once 'script/load_phalcon.php';
 
 $api = new OPNsense\Auth\API();
 
-switch ($argv[1]) {
-    case '-c':
-        $username = get_arg(2, 'username');
+$rest_arg_index = null;
+$opts = getopt('u:j', ['json'], $rest_arg_index);
+$args = array_slice($argv, $rest_arg_index);
+if (0 == count($args)) {
+    cmd_usage();
+}
 
-        $res = $api->createKey($username);
-        echo json_encode($res);
+$username = opt_value($opts, ['u'], exec('whoami'));
+$json_output = opt_value($opts, ['j', 'json'], false);
+
+switch ($args[0]) {
+    case 'create':
+        if (1 != count($args)) {
+            cmd_usage();
+        }
+
+        $data = $api->createKey($username);
+
+        if (null == $data) {
+            printf("username \"%s\" not found\n", $username);
+            exit(1);
+        }
+
+        if ($json_output) {
+            echo json_encode($data)."\n";
+        } else {
+            print_data($data);
+        }
 
         break;
 
-    case '-d':
-        $username = get_arg(2, 'username');
-        $apikey = get_arg(3, 'apikey');
+    case 'delete':
+        if (2 != count($args)) {
+            cmd_usage();
+        }
+        $apikey = $args[1];
 
-        $res = $api->dropKey($username, $apikey);
-        if (!$res) {
-            echo "apikey not found\n";
+        $isFound = $api->dropKey($username, $apikey);
+        if (!$isFound) {
+            printf("apikey \"%s\" not found\n", $apikey);
             exit(1);
         }
         break;
 
     default:
-        echo "Usage: opnsense-apikey -c username\n";
-        echo "                       -d username apikey\n";
-        exit(1);
+        cmd_usage();
 }
 
-function get_arg($num, $name)
+function print_data($data)
 {
-    global $argv;
+    foreach ($data as $key => $value) {
+        printf("%s=%s\n", $key, $value);
+    }
+}
 
-    $value = $argv[$num] ?? '';
-    if ('' == $value) {
-        echo 'No '.$name." given.\n";
-        exit(1);
+function cmd_usage()
+{
+    echo "Usage:\n";
+    echo "       opnsense-apikey [-u username] [-j | --json] create \n";
+    echo "       opnsense-apikey [-u username] delete [apikey]\n";
+    exit(1);
+}
+
+function opt_value($opts, $names, $default)
+{
+    $value = $default;
+
+    foreach ($names as $name) {
+        if (isset($opts[$name]) and '' !== $opts[$name]) {
+            if (is_bool($opts[$name])) {
+                $value = true;
+            } else {
+                $value = $opts[$name];
+            }
+            break;
+        }
     }
 
-    return trim($value,'\'"');
+    return $value;
 }
 
 exit(0);
