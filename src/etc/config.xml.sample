@@ -245,7 +245,7 @@
     </bogons>
     <pf_share_forward>1</pf_share_forward>
     <lb_use_sticky>1</lb_use_sticky>
-   <ssh>
+    <ssh>
       <group>admins</group>
       <noauto>1</noauto>
       <interfaces/>
