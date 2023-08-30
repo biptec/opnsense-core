@@ -247,6 +247,16 @@
     <lb_use_sticky>1</lb_use_sticky>
     <ssh>
       <group>admins</group>
+      <noauto>1</noauto>
+      <interfaces/>
+      <kex/>
+      <ciphers/>
+      <macs/>
+      <keys/>
+      <keysig/>
+      <enabled>enabled</enabled>
+      <passwordauth>1</passwordauth>
+      <permitrootlogin>1</permitrootlogin>
     </ssh>
     <rrdbackup>-1</rrdbackup>
     <netflowbackup>-1</netflowbackup>
@@ -270,10 +280,11 @@
     <lan>
       <enable>1</enable>
       <if>mismatch0</if>
-      <ipaddr>192.168.1.1</ipaddr>
-      <subnet>24</subnet>
+      <ipaddr>dhcp</ipaddr>
+      <subnet/>
       <ipaddrv6>track6</ipaddrv6>
       <subnetv6>64</subnetv6>
+      <dhcphostname/>
       <media/>
       <mediaopt/>
       <track6-interface>wan</track6-interface>
