@@ -245,7 +245,7 @@
     </bogons>
     <pf_share_forward>1</pf_share_forward>
     <lb_use_sticky>1</lb_use_sticky>
-    <ssh>
+   <ssh>
       <group>admins</group>
       <noauto>1</noauto>
       <interfaces/>
@@ -255,8 +255,6 @@
       <keys/>
       <keysig/>
       <enabled>enabled</enabled>
-      <passwordauth>1</passwordauth>
-      <permitrootlogin>1</permitrootlogin>
     </ssh>
     <rrdbackup>-1</rrdbackup>
     <netflowbackup>-1</netflowbackup>
