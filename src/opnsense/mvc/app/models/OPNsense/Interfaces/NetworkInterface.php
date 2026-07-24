@@ -100,6 +100,17 @@ class NetworkInterface extends BaseModel
             $node->descr = (string)$intf->descr;
             $node->identifier = $key;
             $node->lock = empty((string)$intf->lock) ? '0' : '1';
+            foreach (['' => FILTER_FLAG_IPV4, 'v6' => FILTER_FLAG_IPV6] as $suffix => $filter_flag) {
+                $addr_field = 'ipaddr' . $suffix;
+                $subnet_field = 'subnet' . $suffix;
+                $gateway_field = 'gateway' . $suffix;
+                $address = (string)$intf->$addr_field;
+                if ($address !== '' && filter_var($address, FILTER_VALIDATE_IP, $filter_flag) !== false) {
+                    $node->$addr_field = $address;
+                    $node->$subnet_field = (string)$intf->$subnet_field;
+                    $node->$gateway_field = (string)$intf->$gateway_field;
+                }
+            }
             if (isset($iftodo['pending_if'])) {
                 $node->if = $iftodo['pending_if'];
             } else {
@@ -118,12 +129,23 @@ class NetworkInterface extends BaseModel
         $interfaces = $this->interface->getNodeContent();
         $existing_ifnames = [];
         /* mark pending actions as we need to wait for "apply" in order to persist them */
+        $model_interfaces = iterator_to_array($this->interface->iterateItems());
         foreach ($this->iterate_assignments() as $key => $intf) {
             if (!isset($interfaces[$key])) {
                 $this->store_if_todo($key, ['pending_action' => 'delete']);
             } else {
                 $intf->descr = $interfaces[$key]['descr'];
                 $intf->lock = $interfaces[$key]['lock'];
+                foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
+                    if ($model_interfaces[$key]->$field->isFieldChanged()) {
+                        $value = $interfaces[$key][$field];
+                        if ($value === '') {
+                            unset($intf->$field);
+                        } else {
+                            $intf->$field = $value;
+                        }
+                    }
+                }
                 /* flush actions that need to be applied, for which we need history */
                 if ($intf->if != $interfaces[$key]['if']) {
                     $this->store_if_todo($key, ['pending_action' => 'relink', 'pending_if' => $interfaces[$key]['if']]);
@@ -142,6 +164,11 @@ class NetworkInterface extends BaseModel
                 $newif->if = $intf['if'];
                 $newif->descr = $intf['descr'];
                 $newif->lock = $intf['lock'];
+                foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
+                    if ($intf[$field] !== '') {
+                        $newif->$field = $intf[$field];
+                    }
+                }
                 $next_if++;
             }
         }
@@ -156,6 +183,38 @@ class NetworkInterface extends BaseModel
                 continue;
             }
             $key = $if->__reference;
+            foreach ([['ipaddr', 'subnet'], ['ipaddrv6', 'subnetv6']] as $fields) {
+                $has_address = $if->{$fields[0]}->getValue() !== '';
+                $has_prefix = $if->{$fields[1]}->getValue() !== '';
+                if ($has_address !== $has_prefix) {
+                    $msg = gettext('A static IP address and its prefix length must be configured together.');
+                    $messages->appendMessage(new Message($msg, $key . '.' . $fields[0]));
+                    $messages->appendMessage(new Message($msg, $key . '.' . $fields[1]));
+                }
+            }
+            foreach ([['gateway', 'ipaddr', 'inet'], ['gatewayv6', 'ipaddrv6', 'inet6']] as $fields) {
+                $gateway = $if->{$fields[0]}->getValue();
+                if ($gateway !== '' && $if->{$fields[1]}->getValue() === '') {
+                    $msg = gettext('A gateway requires a static IP address of the same address family.');
+                    $messages->appendMessage(new Message($msg, $key . '.' . $fields[0]));
+                } elseif ($gateway !== '') {
+                    $gateway_found = false;
+                    foreach (Config::getInstance()->object()->xpath('//OPNsense/Gateways/gateway_item') as $gateway_node) {
+                        if (
+                            (string)$gateway_node->name === $gateway &&
+                            (string)$gateway_node->interface === $ifname &&
+                            (string)$gateway_node->ipprotocol === $fields[2]
+                        ) {
+                            $gateway_found = true;
+                            break;
+                        }
+                    }
+                    if (!$gateway_found) {
+                        $msg = gettext('The selected gateway does not exist for this interface and address family.');
+                        $messages->appendMessage(new Message($msg, $key . '.' . $fields[0]));
+                    }
+                }
+            }
             if (preg_match('/^bridge[0-9]/', $if->if->getValue())) {
                 foreach (Config::getInstance()->object()->xpath('/*/bridges/bridged') as $node) {
                     if (in_array($ifname, explode(',', $node->members))) {

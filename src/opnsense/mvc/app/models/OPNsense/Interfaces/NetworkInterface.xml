@@ -22,6 +22,26 @@
                 <Default>1</Default>
                 <Required>Y</Required>
             </lock>
+            <ipaddr type="NetworkField">
+                <AddressFamily>ipv4</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </ipaddr>
+            <subnet type="IntegerField">
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>32</MaximumValue>
+            </subnet>
+            <gateway type="TextField"/>
+            <ipaddrv6 type="NetworkField">
+                <AddressFamily>ipv6</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </ipaddrv6>
+            <subnetv6 type="IntegerField">
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>128</MaximumValue>
+            </subnetv6>
+            <gatewayv6 type="TextField"/>
         </interface>
     </items>
 </model>
