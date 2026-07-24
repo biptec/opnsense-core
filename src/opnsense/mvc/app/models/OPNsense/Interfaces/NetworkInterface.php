@@ -40,6 +40,129 @@ class NetworkInterface extends BaseModel
     private const RECONFIGURE_FIELDS = ['enable', 'spoofmac', 'promisc', 'mtu'];
     private const FILTER_FIELDS = ['blockpriv', 'blockbogons', 'gateway_interface', 'mss'];
     private const BOOLEAN_FIELDS = ['enable', 'blockpriv', 'blockbogons', 'gateway_interface', 'promisc'];
+    private const DHCP4_FIELDS = ['dhcphostname', 'alias-address', 'alias-subnet', 'dhcprejectfrom'];
+    private const DHCP6_FIELDS = [
+        'dhcp6-ia-pd-len',
+        'dhcp6-ia-pd-send-hint',
+        'dhcp6prefixonly',
+        'dhcp6usev4iface',
+        'dhcp6vlanprio'
+    ];
+    private const TRACK6_FIELDS = ['track6-interface', 'track6-prefix-id', 'track6_assoc_pd'];
+    private const DYNAMIC_BOOLEAN_FIELDS = [
+        'dhcp6-ia-pd-send-hint',
+        'dhcp6prefixonly',
+        'dhcp6usev4iface'
+    ];
+    private const MANAGED_IPV4_MODES = ['none', 'static', 'dhcp'];
+    private const MANAGED_IPV6_MODES = ['none', 'static', 'linklocal', 'slaac', 'dhcp6', 'track6', 'idassoc6'];
+
+    private function address_mode($address, $family)
+    {
+        $flag = $family == 6 ? FILTER_FLAG_IPV6 : FILTER_FLAG_IPV4;
+        if ($address !== '' && filter_var($address, FILTER_VALIDATE_IP, $flag) !== false) {
+            return 'static';
+        }
+        return $address === '' ? 'none' : $address;
+    }
+
+    private function effective_mode($interface, $family)
+    {
+        $mode_field = $family == 6 ? 'type6' : 'type';
+        $address_field = $family == 6 ? 'ipaddrv6' : 'ipaddr';
+        $mode = $interface->$mode_field->getValue();
+        if (
+            !$interface->$mode_field->isFieldChanged() &&
+            $mode != 'static' &&
+            $interface->$address_field->isFieldChanged() &&
+            $interface->$address_field->getValue() !== ''
+        ) {
+            return 'static';
+        }
+        return $mode;
+    }
+
+    private function set_config_field($node, $field, $value)
+    {
+        $boolean_fields = array_merge(self::BOOLEAN_FIELDS, self::DYNAMIC_BOOLEAN_FIELDS);
+        if (in_array($field, $boolean_fields)) {
+            if ($value == '1') {
+                $node->$field = '1';
+            } else {
+                unset($node->$field);
+            }
+        } elseif ($value === '') {
+            unset($node->$field);
+        } else {
+            $node->$field = $value;
+        }
+    }
+
+    private function serialize_family($intf, $model, $data, $family)
+    {
+        if ($family == 6) {
+            $mode_field = 'type6';
+            $address_field = 'ipaddrv6';
+            $subnet_field = 'subnetv6';
+            $gateway_field = 'gatewayv6';
+            $all_dynamic = array_merge(self::DHCP6_FIELDS, self::TRACK6_FIELDS);
+        } else {
+            $mode_field = 'type';
+            $address_field = 'ipaddr';
+            $subnet_field = 'subnet';
+            $gateway_field = 'gateway';
+            $all_dynamic = self::DHCP4_FIELDS;
+        }
+
+        $mode = $data[$mode_field];
+        $mode_changed = $model->$mode_field->isFieldChanged();
+        if (
+            !$mode_changed &&
+            $mode != 'static' &&
+            $model->$address_field->isFieldChanged() &&
+            $data[$address_field] !== ''
+        ) {
+            /* Backwards compatibility for the static-address-only API payload. */
+            $mode = 'static';
+            $mode_changed = true;
+        }
+        $changed = $mode_changed;
+        if ($mode_changed) {
+            foreach (array_merge([$address_field, $subnet_field, $gateway_field], $all_dynamic) as $field) {
+                unset($intf->$field);
+            }
+            if ($mode == 'static') {
+                foreach ([$address_field, $subnet_field, $gateway_field] as $field) {
+                    $this->set_config_field($intf, $field, $data[$field]);
+                }
+            } elseif ($mode != 'none') {
+                $intf->$address_field = $mode;
+            }
+        } elseif ($mode == 'static') {
+            foreach ([$address_field, $subnet_field, $gateway_field] as $field) {
+                if ($model->$field->isFieldChanged()) {
+                    $this->set_config_field($intf, $field, $data[$field]);
+                    $changed = true;
+                }
+            }
+        }
+
+        $active_fields = [];
+        if ($family == 4 && $mode == 'dhcp') {
+            $active_fields = self::DHCP4_FIELDS;
+        } elseif ($family == 6 && $mode == 'dhcp6') {
+            $active_fields = self::DHCP6_FIELDS;
+        } elseif ($family == 6 && in_array($mode, ['track6', 'idassoc6'])) {
+            $active_fields = self::TRACK6_FIELDS;
+        }
+        foreach ($active_fields as $field) {
+            if ($mode_changed || $model->$field->isFieldChanged()) {
+                $this->set_config_field($intf, $field, $data[$field]);
+                $changed = true;
+            }
+        }
+        return $changed;
+    }
 
     /**
      * @param array $payload data to store
@@ -126,6 +249,18 @@ class NetworkInterface extends BaseModel
                 }
                 $node->$field->markUnchanged();
             }
+            $node->type = $this->address_mode((string)$intf->ipaddr, 4);
+            $node->type6 = $this->address_mode((string)$intf->ipaddrv6, 6);
+            $node->type->markUnchanged();
+            $node->type6->markUnchanged();
+            foreach (array_merge(self::DHCP4_FIELDS, self::DHCP6_FIELDS, self::TRACK6_FIELDS) as $field) {
+                if (in_array($field, self::DYNAMIC_BOOLEAN_FIELDS)) {
+                    $node->$field = empty((string)$intf->$field) ? '0' : '1';
+                } else {
+                    $node->$field = (string)$intf->$field;
+                }
+                $node->$field->markUnchanged();
+            }
             foreach (['' => FILTER_FLAG_IPV4, 'v6' => FILTER_FLAG_IPV6] as $suffix => $filter_flag) {
                 $addr_field = 'ipaddr' . $suffix;
                 $subnet_field = 'subnet' . $suffix;
@@ -192,28 +327,15 @@ class NetworkInterface extends BaseModel
                     $this->store_if_todo($key, ['pending_action' => $pending_action]);
                 }
                 $changed_families = [];
-                foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
-                    if ($model_interfaces[$key]->$field->isFieldChanged()) {
-                        $changed_families[] = substr($field, -2) == 'v6' ? 6 : 4;
-                        $value = $interfaces[$key][$field];
-                        if ($value === '') {
-                            if (
-                                in_array($field, ['ipaddr', 'ipaddrv6']) &&
-                                (string)$intf->$field !== '' &&
-                                filter_var((string)$intf->$field, FILTER_VALIDATE_IP) === false
-                            ) {
-                                continue;
-                            }
-                            unset($intf->$field);
-                        } else {
-                            $intf->$field = $value;
-                        }
+                foreach ([4, 6] as $family) {
+                    if ($this->serialize_family($intf, $model_interfaces[$key], $interfaces[$key], $family)) {
+                        $changed_families[] = $family;
                     }
                 }
                 if (!empty($changed_families)) {
                     $this->store_if_todo($key, [
                         'pending_action' => 'reconfigure',
-                        'pending_families' => array_values(array_unique($changed_families))
+                        'pending_families' => $changed_families
                     ]);
                 }
                 /* flush actions that need to be applied, for which we need history */
@@ -242,11 +364,8 @@ class NetworkInterface extends BaseModel
                         $newif->$field = $value;
                     }
                 }
-                foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
-                    if ($intf[$field] !== '') {
-                        $newif->$field = $intf[$field];
-                    }
-                }
+                $this->serialize_family($newif, $model_interfaces[$key], $intf, 4);
+                $this->serialize_family($newif, $model_interfaces[$key], $intf, 6);
                 $this->store_if_todo($new_key, ['pending_action' => 'reconfigure']);
                 $next_if++;
             }
@@ -262,27 +381,47 @@ class NetworkInterface extends BaseModel
                 continue;
             }
             $key = $if->__reference;
-            foreach ([['ipaddr', 'subnet'], ['ipaddrv6', 'subnetv6']] as $fields) {
-                $has_address = $if->{$fields[0]}->getValue() !== '';
-                $has_prefix = $if->{$fields[1]}->getValue() !== '';
-                if ($has_address !== $has_prefix) {
-                    $msg = gettext('A static IP address and its prefix length must be configured together.');
-                    $messages->appendMessage(new Message($msg, $key . '.' . $fields[0]));
-                    $messages->appendMessage(new Message($msg, $key . '.' . $fields[1]));
+            foreach ([
+                4 => ['type', 'ipaddr', 'subnet', 'gateway', 'inet', self::MANAGED_IPV4_MODES],
+                6 => ['type6', 'ipaddrv6', 'subnetv6', 'gatewayv6', 'inet6', self::MANAGED_IPV6_MODES]
+            ] as $family => $fields) {
+                [$mode_field, $address_field, $subnet_field, $gateway_field, $protocol, $managed_modes] = $fields;
+                $mode = $this->effective_mode($if, $family);
+                $mode_changed = $if->$mode_field->isFieldChanged();
+                $config_address = isset(Config::getInstance()->object()->interfaces->$ifname) ?
+                    (string)Config::getInstance()->object()->interfaces->$ifname->$address_field : '';
+                $current_mode = $this->address_mode($config_address, $family);
+                if ($mode_changed && !in_array($mode, $managed_modes) && $mode != $current_mode) {
+                    $msg = gettext('This address mode is managed by another interface subsystem.');
+                    $messages->appendMessage(new Message($msg, $key . '.' . $mode_field));
                 }
-            }
-            foreach ([['gateway', 'ipaddr', 'inet'], ['gatewayv6', 'ipaddrv6', 'inet6']] as $fields) {
-                $gateway = $if->{$fields[0]}->getValue();
-                if ($gateway !== '' && $if->{$fields[1]}->getValue() === '') {
+
+                $has_address = $if->$address_field->getValue() !== '';
+                $has_prefix = $if->$subnet_field->getValue() !== '';
+                if ($mode == 'static' && (!$has_address || !$has_prefix)) {
+                    $msg = gettext('A static IP address and its prefix length must be configured together.');
+                    $messages->appendMessage(new Message($msg, $key . '.' . $address_field));
+                    $messages->appendMessage(new Message($msg, $key . '.' . $subnet_field));
+                } elseif ($mode != 'static' && !$mode_changed) {
+                    foreach ([$address_field, $subnet_field, $gateway_field] as $field) {
+                        if ($if->$field->isFieldChanged() && $if->$field->getValue() !== '') {
+                            $msg = gettext('Static addressing fields require static address mode.');
+                            $messages->appendMessage(new Message($msg, $key . '.' . $field));
+                        }
+                    }
+                }
+
+                $gateway = $if->$gateway_field->getValue();
+                if ($mode == 'static' && $gateway !== '' && !$has_address) {
                     $msg = gettext('A gateway requires a static IP address of the same address family.');
-                    $messages->appendMessage(new Message($msg, $key . '.' . $fields[0]));
-                } elseif ($gateway !== '') {
+                    $messages->appendMessage(new Message($msg, $key . '.' . $gateway_field));
+                } elseif ($mode == 'static' && $gateway !== '') {
                     $gateway_found = false;
                     foreach (Config::getInstance()->object()->xpath('//OPNsense/Gateways/gateway_item') as $gateway_node) {
                         if (
                             (string)$gateway_node->name === $gateway &&
                             (string)$gateway_node->interface === $ifname &&
-                            (string)$gateway_node->ipprotocol === $fields[2]
+                            (string)$gateway_node->ipprotocol === $protocol
                         ) {
                             $gateway_found = true;
                             break;
@@ -290,7 +429,84 @@ class NetworkInterface extends BaseModel
                     }
                     if (!$gateway_found) {
                         $msg = gettext('The selected gateway does not exist for this interface and address family.');
-                        $messages->appendMessage(new Message($msg, $key . '.' . $fields[0]));
+                        $messages->appendMessage(new Message($msg, $key . '.' . $gateway_field));
+                    }
+                }
+            }
+
+            $mode_requirements = [
+                'dhcp' => self::DHCP4_FIELDS,
+                'dhcp6' => self::DHCP6_FIELDS,
+                'track6' => self::TRACK6_FIELDS,
+                'idassoc6' => self::TRACK6_FIELDS
+            ];
+            foreach ($mode_requirements as $required_mode => $fields) {
+                $actual_mode = $required_mode == 'dhcp' ? $this->effective_mode($if, 4) : $this->effective_mode($if, 6);
+                foreach ($fields as $field) {
+                    $value = $if->$field->getValue();
+                    if ($if->$field->isFieldChanged() && $value !== '' && $value != '0' && $actual_mode != $required_mode) {
+                        if (!in_array($actual_mode, ['track6', 'idassoc6']) || !in_array($required_mode, ['track6', 'idassoc6'])) {
+                            $msg = sprintf(gettext('Field %s is not valid for the selected address mode.'), $field);
+                            $messages->appendMessage(new Message($msg, $key . '.' . $field));
+                        }
+                    }
+                }
+            }
+
+            if ($this->effective_mode($if, 4) == 'dhcp') {
+                $has_alias = $if->{'alias-address'}->getValue() !== '';
+                $has_alias_subnet = $if->{'alias-subnet'}->getValue() !== '';
+                if ($has_alias !== $has_alias_subnet) {
+                    $msg = gettext('A DHCP alias address and its prefix length must be configured together.');
+                    $messages->appendMessage(new Message($msg, $key . '.alias-address'));
+                    $messages->appendMessage(new Message($msg, $key . '.alias-subnet'));
+                }
+                foreach (array_filter(array_map('trim', explode(',', $if->dhcprejectfrom->getValue()))) as $address) {
+                    if (filter_var($address, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) === false) {
+                        $msg = gettext('A valid IPv4 address list must be specified for rejected DHCP servers.');
+                        $messages->appendMessage(new Message($msg, $key . '.dhcprejectfrom'));
+                        break;
+                    }
+                }
+            }
+
+            $ipv6_mode = $this->effective_mode($if, 6);
+            if (in_array($ipv6_mode, ['track6', 'idassoc6'])) {
+                $track_interface = $if->{'track6-interface'}->getValue();
+                if ($track_interface === '') {
+                    $messages->appendMessage(new Message(
+                        gettext('A tracked interface is required.'),
+                        $key . '.track6-interface'
+                    ));
+                } elseif ($track_interface == $ifname) {
+                    $messages->appendMessage(new Message(
+                        gettext('An interface cannot track itself.'),
+                        $key . '.track6-interface'
+                    ));
+                } elseif (!isset(Config::getInstance()->object()->interfaces->$track_interface)) {
+                    $messages->appendMessage(new Message(
+                        gettext('The tracked interface does not exist.'),
+                        $key . '.track6-interface'
+                    ));
+                } else {
+                    $tracked = Config::getInstance()->object()->interfaces->$track_interface;
+                    $tracked_mode = $this->address_mode((string)$tracked->ipaddrv6, 6);
+                    if (!in_array($tracked_mode, ['dhcp6', 'slaac'])) {
+                        $messages->appendMessage(new Message(
+                            gettext('The tracked interface must use DHCPv6 or SLAAC.'),
+                            $key . '.track6-interface'
+                        ));
+                    }
+                    $prefix_id = $if->{'track6-prefix-id'}->getValue();
+                    $delegation = (string)$tracked->{'dhcp6-ia-pd-len'};
+                    if ($prefix_id !== '' && ctype_digit($delegation) && $delegation >= 48 && $delegation <= 64) {
+                        $maximum = (2 ** (64 - (int)$delegation)) - 1;
+                        if ((int)$prefix_id > $maximum) {
+                            $messages->appendMessage(new Message(
+                                gettext('The tracked prefix ID is outside the delegated prefix range.'),
+                                $key . '.track6-prefix-id'
+                            ));
+                        }
                     }
                 }
             }
