@@ -4,6 +4,13 @@
     <wan>
       <if>em0</if>
       <descr>WAN</descr>
+      <enable>1</enable>
+      <blockpriv>1</blockpriv>
+      <gateway_interface>1</gateway_interface>
+      <promisc>1</promisc>
+      <spoofmac>02:00:00:00:00:01</spoofmac>
+      <mtu>9000</mtu>
+      <mss>1400</mss>
       <ipaddr>192.0.2.2</ipaddr>
       <subnet>24</subnet>
       <gateway>WAN_GW</gateway>

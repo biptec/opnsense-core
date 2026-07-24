@@ -37,6 +37,10 @@ class NetworkInterface extends BaseModel
 {
     var $todo_file = '/tmp/.interfaces.todo';
 
+    private const RECONFIGURE_FIELDS = ['enable', 'spoofmac', 'promisc', 'mtu'];
+    private const FILTER_FIELDS = ['blockpriv', 'blockbogons', 'gateway_interface', 'mss'];
+    private const BOOLEAN_FIELDS = ['enable', 'blockpriv', 'blockbogons', 'gateway_interface', 'promisc'];
+
     /**
      * @param array $payload data to store
      */
@@ -45,9 +49,10 @@ class NetworkInterface extends BaseModel
         $fobj = new FileObject($this->todo_file, 'a+', 0600, LOCK_EX);
         $data = $fobj->readJson() ?? [];
         $current_action = $data[$id]['pending_action'] ?? '';
+        $next_action = $payload['pending_action'] ?? '';
         if (
-            ($payload['pending_action'] ?? '') == 'reconfigure' &&
-            in_array($current_action, ['delete', 'relink'])
+            (in_array($current_action, ['delete', 'relink']) && in_array($next_action, ['filter', 'reconfigure'])) ||
+            ($current_action == 'reconfigure' && $next_action == 'filter')
         ) {
             unset($payload['pending_action']);
         }
@@ -113,6 +118,14 @@ class NetworkInterface extends BaseModel
             $node->descr = (string)$intf->descr;
             $node->identifier = $key;
             $node->lock = empty((string)$intf->lock) ? '0' : '1';
+            foreach (array_merge(self::RECONFIGURE_FIELDS, self::FILTER_FIELDS) as $field) {
+                if (in_array($field, self::BOOLEAN_FIELDS)) {
+                    $node->$field = empty((string)$intf->$field) ? '0' : '1';
+                } else {
+                    $node->$field = (string)$intf->$field;
+                }
+                $node->$field->markUnchanged();
+            }
             foreach (['' => FILTER_FLAG_IPV4, 'v6' => FILTER_FLAG_IPV6] as $suffix => $filter_flag) {
                 $addr_field = 'ipaddr' . $suffix;
                 $subnet_field = 'subnet' . $suffix;
@@ -152,6 +165,32 @@ class NetworkInterface extends BaseModel
             } else {
                 $intf->descr = $interfaces[$key]['descr'];
                 $intf->lock = $interfaces[$key]['lock'];
+                $pending_action = '';
+                foreach (array_merge(self::RECONFIGURE_FIELDS, self::FILTER_FIELDS) as $field) {
+                    if (!$model_interfaces[$key]->$field->isFieldChanged()) {
+                        continue;
+                    }
+                    $value = $interfaces[$key][$field];
+                    if (in_array($field, self::BOOLEAN_FIELDS)) {
+                        if ($value == '1') {
+                            $intf->$field = '1';
+                        } else {
+                            unset($intf->$field);
+                        }
+                    } elseif ($value === '') {
+                        unset($intf->$field);
+                    } else {
+                        $intf->$field = $value;
+                    }
+                    if (in_array($field, self::RECONFIGURE_FIELDS)) {
+                        $pending_action = 'reconfigure';
+                    } elseif ($pending_action === '') {
+                        $pending_action = 'filter';
+                    }
+                }
+                if ($pending_action !== '') {
+                    $this->store_if_todo($key, ['pending_action' => $pending_action]);
+                }
                 $changed_families = [];
                 foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
                     if ($model_interfaces[$key]->$field->isFieldChanged()) {
@@ -191,15 +230,24 @@ class NetworkInterface extends BaseModel
 
         foreach ($interfaces as $key => $intf) {
             if (!isset(Config::getInstance()->object()->interfaces->$key)) {
-                $newif = Config::getInstance()->object()->interfaces->addChild('opt' . $next_if);
+                $new_key = 'opt' . $next_if;
+                $newif = Config::getInstance()->object()->interfaces->addChild($new_key);
                 $newif->if = $intf['if'];
                 $newif->descr = $intf['descr'];
                 $newif->lock = $intf['lock'];
+                foreach (array_merge(self::RECONFIGURE_FIELDS, self::FILTER_FIELDS) as $field) {
+                    $value = $intf[$field];
+                    if ((in_array($field, self::BOOLEAN_FIELDS) && $value == '1') ||
+                        (!in_array($field, self::BOOLEAN_FIELDS) && $value !== '')) {
+                        $newif->$field = $value;
+                    }
+                }
                 foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
                     if ($intf[$field] !== '') {
                         $newif->$field = $intf[$field];
                     }
                 }
+                $this->store_if_todo($new_key, ['pending_action' => 'reconfigure']);
                 $next_if++;
             }
         }

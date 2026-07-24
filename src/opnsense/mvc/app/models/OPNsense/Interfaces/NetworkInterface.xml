@@ -1,6 +1,6 @@
 <model>
     <mount>:memory:</mount>
-    <version>0.0.2</version>
+    <version>0.0.3</version>
     <description>Interface assignments</description>
     <items>
         <interface type="ArrayField">
@@ -22,6 +22,35 @@
                 <Default>1</Default>
                 <Required>Y</Required>
             </lock>
+            <enable type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </enable>
+            <blockpriv type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </blockpriv>
+            <blockbogons type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </blockbogons>
+            <gateway_interface type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </gateway_interface>
+            <promisc type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </promisc>
+            <spoofmac type="MacAddressField"/>
+            <mtu type="IntegerField">
+                <MinimumValue>576</MinimumValue>
+                <MaximumValue>65535</MaximumValue>
+            </mtu>
+            <mss type="IntegerField">
+                <MinimumValue>576</MinimumValue>
+                <MaximumValue>65535</MaximumValue>
+            </mss>
             <ipaddr type="NetworkField">
                 <AddressFamily>ipv4</AddressFamily>
                 <NetMaskAllowed>N</NetMaskAllowed>
