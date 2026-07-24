@@ -45,16 +45,25 @@ if (is_array($config['interfaces'])) {
             continue;
         }
         $pending_act = $todos[$id]['pending_action'] ?? '';
+        foreach (array_unique($todos[$id]['pending_families'] ?? []) as $family) {
+            if (!in_array($family, [4, 6])) {
+                continue;
+            }
+            $device = $family == 6 ? get_real_interface($id, 'inet6') : $ifcfg['if'];
+            interfaces_addresses_flush($device, $family);
+        }
         if (in_array($pending_act, ['delete', 'relink'])) {
             interface_reset($id);
-            if ($pending_act == 'relink') {
-                $to_configure[] = $id;
-            }
+        }
+        if (in_array($pending_act, ['relink', 'reconfigure'])) {
+            $to_configure[] = $id;
         }
     }
 
     foreach ($to_configure as $ifname) {
-        $config['interfaces'][$ifname]['if'] = $todos[$ifname]['pending_if'];
+        if (($todos[$ifname]['pending_action'] ?? '') == 'relink') {
+            $config['interfaces'][$ifname]['if'] = $todos[$ifname]['pending_if'];
+        }
         if (isset($config['interfaces'][$ifname]['wireless'])) {
             interface_sync_wireless_clones($config['interfaces'][$ifname], false);
         }

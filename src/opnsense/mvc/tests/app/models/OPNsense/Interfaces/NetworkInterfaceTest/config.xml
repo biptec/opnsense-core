@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<opnsense>
+  <interfaces>
+    <wan>
+      <if>em0</if>
+      <descr>WAN</descr>
+      <ipaddr>192.0.2.2</ipaddr>
+      <subnet>24</subnet>
+      <gateway>WAN_GW</gateway>
+    </wan>
+  </interfaces>
+  <OPNsense>
+    <Gateways>
+      <gateway_item uuid="11111111-1111-1111-1111-111111111111">
+        <name>WAN_GW</name>
+        <interface>wan</interface>
+        <ipprotocol>inet</ipprotocol>
+        <gateway>192.0.2.1</gateway>
+      </gateway_item>
+      <gateway_item uuid="22222222-2222-2222-2222-222222222222">
+        <name>WAN6_GW</name>
+        <interface>wan</interface>
+        <ipprotocol>inet6</ipprotocol>
+        <gateway>2001:db8::1</gateway>
+      </gateway_item>
+    </Gateways>
+  </OPNsense>
+</opnsense>
