@@ -44,6 +44,19 @@ class NetworkInterface extends BaseModel
     {
         $fobj = new FileObject($this->todo_file, 'a+', 0600, LOCK_EX);
         $data = $fobj->readJson() ?? [];
+        $current_action = $data[$id]['pending_action'] ?? '';
+        if (
+            ($payload['pending_action'] ?? '') == 'reconfigure' &&
+            in_array($current_action, ['delete', 'relink'])
+        ) {
+            unset($payload['pending_action']);
+        }
+        if (!empty($payload['pending_families'])) {
+            $payload['pending_families'] = array_values(array_unique(array_merge(
+                $data[$id]['pending_families'] ?? [],
+                $payload['pending_families']
+            )));
+        }
         $data[$id] = array_merge($data[$id] ?? [], $payload);
         $fobj->truncate(0)->writeJson($data);
     }
@@ -110,6 +123,9 @@ class NetworkInterface extends BaseModel
                     $node->$subnet_field = (string)$intf->$subnet_field;
                     $node->$gateway_field = (string)$intf->$gateway_field;
                 }
+                $node->$addr_field->markUnchanged();
+                $node->$subnet_field->markUnchanged();
+                $node->$gateway_field->markUnchanged();
             }
             if (isset($iftodo['pending_if'])) {
                 $node->if = $iftodo['pending_if'];
@@ -136,8 +152,10 @@ class NetworkInterface extends BaseModel
             } else {
                 $intf->descr = $interfaces[$key]['descr'];
                 $intf->lock = $interfaces[$key]['lock'];
+                $changed_families = [];
                 foreach (['ipaddr', 'subnet', 'gateway', 'ipaddrv6', 'subnetv6', 'gatewayv6'] as $field) {
                     if ($model_interfaces[$key]->$field->isFieldChanged()) {
+                        $changed_families[] = substr($field, -2) == 'v6' ? 6 : 4;
                         $value = $interfaces[$key][$field];
                         if ($value === '') {
                             if (
@@ -152,6 +170,12 @@ class NetworkInterface extends BaseModel
                             $intf->$field = $value;
                         }
                     }
+                }
+                if (!empty($changed_families)) {
+                    $this->store_if_todo($key, [
+                        'pending_action' => 'reconfigure',
+                        'pending_families' => array_values(array_unique($changed_families))
+                    ]);
                 }
                 /* flush actions that need to be applied, for which we need history */
                 if ($intf->if != $interfaces[$key]['if']) {
