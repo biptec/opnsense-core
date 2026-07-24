@@ -150,6 +150,160 @@ class NetworkInterfaceTest extends \PHPUnit\Framework\TestCase
         $this->assertSame('reconfigure', $model->get_if_todo()['opt1']['pending_action']);
     }
 
+    public function testAddressModesAreLoaded(): void
+    {
+        $node = $this->newModel()->getNodeByReference('interface.wan');
+        $this->assertSame('static', $node->type->getValue());
+        $this->assertSame('none', $node->type6->getValue());
+    }
+
+    public function testDhcpModesAndOptionsAreLoaded(): void
+    {
+        $config = Config::getInstance()->object()->interfaces->wan;
+        $config->ipaddr = 'dhcp';
+        $config->dhcphostname = 'edge-router';
+        $config->{'alias-address'} = '192.0.2.10';
+        $config->{'alias-subnet'} = '24';
+        $config->ipaddrv6 = 'dhcp6';
+        $config->{'dhcp6-ia-pd-len'} = '56';
+        $config->{'dhcp6-ia-pd-send-hint'} = '1';
+
+        $node = $this->newModel()->getNodeByReference('interface.wan');
+        $this->assertSame('dhcp', $node->type->getValue());
+        $this->assertSame('edge-router', $node->dhcphostname->getValue());
+        $this->assertSame('192.0.2.10', $node->{'alias-address'}->getValue());
+        $this->assertSame('dhcp6', $node->type6->getValue());
+        $this->assertSame('56', $node->{'dhcp6-ia-pd-len'}->getValue());
+        $this->assertSame('1', $node->{'dhcp6-ia-pd-send-hint'}->getValue());
+    }
+
+    public function testSwitchToDhcpClearsStaticConfiguration(): void
+    {
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $node->type->setValue('dhcp');
+        $node->dhcphostname->setValue('edge-router');
+        $node->{'alias-address'}->setValue('192.0.2.10');
+        $node->{'alias-subnet'}->setValue('24');
+        $node->dhcprejectfrom->setValue('192.0.2.20,192.0.2.21');
+        $this->assertEmpty($model->performValidation()->getMessages());
+        $this->assertTrue($model->serializeToConfig());
+
+        $config = Config::getInstance()->object()->interfaces->wan;
+        $this->assertSame('dhcp', (string)$config->ipaddr);
+        $this->assertFalse(isset($config->subnet));
+        $this->assertFalse(isset($config->gateway));
+        $this->assertSame('edge-router', (string)$config->dhcphostname);
+        $this->assertSame('192.0.2.10', (string)$config->{'alias-address'});
+        $this->assertSame([4], $model->get_if_todo()['wan']['pending_families']);
+    }
+
+    public function testSwitchToNoneClearsAddressFamily(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->type->setValue('none');
+        $this->assertEmpty($model->performValidation()->getMessages());
+        $this->assertTrue($model->serializeToConfig());
+        $config = Config::getInstance()->object()->interfaces->wan;
+        $this->assertFalse(isset($config->ipaddr));
+        $this->assertFalse(isset($config->subnet));
+        $this->assertFalse(isset($config->gateway));
+    }
+
+    public function testDhcpOptionsRequireDhcpMode(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->dhcphostname->setValue('edge-router');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testDhcpRejectListIsValidated(): void
+    {
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $node->type->setValue('dhcp');
+        $node->dhcprejectfrom->setValue('192.0.2.20,invalid');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testSwitchToDhcpv6SerializesPrefixDelegation(): void
+    {
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $node->type6->setValue('dhcp6');
+        $node->{'dhcp6-ia-pd-len'}->setValue('56');
+        $node->{'dhcp6-ia-pd-send-hint'}->setValue('1');
+        $node->dhcp6prefixonly->setValue('1');
+        $this->assertEmpty($model->performValidation()->getMessages());
+        $this->assertTrue($model->serializeToConfig());
+
+        $config = Config::getInstance()->object()->interfaces->wan;
+        $this->assertSame('dhcp6', (string)$config->ipaddrv6);
+        $this->assertSame('56', (string)$config->{'dhcp6-ia-pd-len'});
+        $this->assertSame('1', (string)$config->{'dhcp6-ia-pd-send-hint'});
+        $this->assertSame('1', (string)$config->dhcp6prefixonly);
+        $this->assertSame([6], $model->get_if_todo()['wan']['pending_families']);
+    }
+
+    public function testTrack6RequiresValidDelegatingInterface(): void
+    {
+        $config = Config::getInstance()->object();
+        $config->interfaces->wan->ipaddrv6 = 'dhcp6';
+        $config->interfaces->wan->{'dhcp6-ia-pd-len'} = '56';
+        $opt = $config->interfaces->addChild('opt1');
+        $opt->if = 'em1';
+        $opt->descr = 'LAN2';
+        $opt->enable = '1';
+
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.opt1');
+        $node->type6->setValue('track6');
+        $node->{'track6-interface'}->setValue('wan');
+        $node->{'track6-prefix-id'}->setValue('10');
+        $node->track6_assoc_pd->setValue('1');
+        $this->assertEmpty($model->performValidation()->getMessages());
+        $this->assertTrue($model->serializeToConfig());
+        $this->assertSame('track6', (string)$config->interfaces->opt1->ipaddrv6);
+        $this->assertSame('wan', (string)$config->interfaces->opt1->{'track6-interface'});
+        $this->assertSame('10', (string)$config->interfaces->opt1->{'track6-prefix-id'});
+    }
+
+    public function testTrack6PrefixMustFitDelegation(): void
+    {
+        $config = Config::getInstance()->object();
+        $config->interfaces->wan->ipaddrv6 = 'dhcp6';
+        $config->interfaces->wan->{'dhcp6-ia-pd-len'} = '56';
+        $opt = $config->interfaces->addChild('opt1');
+        $opt->if = 'em1';
+        $opt->descr = 'LAN2';
+        $opt->enable = '1';
+
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.opt1');
+        $node->type6->setValue('track6');
+        $node->{'track6-interface'}->setValue('wan');
+        $node->{'track6-prefix-id'}->setValue('256');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testUnsupportedModeCannotBeSelected(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->type->setValue('pppoe');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testExistingUnsupportedModeIsPreserved(): void
+    {
+        Config::getInstance()->object()->interfaces->wan->ipaddr = 'pppoe';
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $this->assertSame('pppoe', $node->type->getValue());
+        $node->descr->setValue('Updated WAN');
+        $this->assertTrue($model->serializeToConfig());
+        $this->assertSame('pppoe', (string)Config::getInstance()->object()->interfaces->wan->ipaddr);
+    }
+
     public function testAddressRequiresPrefix(): void
     {
         $model = $this->newModel();
