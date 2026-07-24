@@ -1,6 +1,6 @@
 <model>
     <mount>:memory:</mount>
-    <version>0.0.3</version>
+    <version>0.0.4</version>
     <description>Interface assignments</description>
     <items>
         <interface type="ArrayField">
@@ -51,6 +51,76 @@
                 <MinimumValue>576</MinimumValue>
                 <MaximumValue>65535</MaximumValue>
             </mss>
+            <type type="OptionField">
+                <Default>none</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <none value="none">None</none>
+                    <static value="static">Static IPv4</static>
+                    <dhcp value="dhcp">DHCP</dhcp>
+                    <ppp value="ppp">PPP</ppp>
+                    <pppoe value="pppoe">PPPoE</pppoe>
+                    <pptp value="pptp">PPTP</pptp>
+                    <l2tp value="l2tp">L2TP</l2tp>
+                </OptionValues>
+            </type>
+            <dhcphostname type="HostnameField">
+                <IpAllowed>N</IpAllowed>
+            </dhcphostname>
+            <alias-address type="NetworkField">
+                <AddressFamily>ipv4</AddressFamily>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+            </alias-address>
+            <alias-subnet type="IntegerField">
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>32</MaximumValue>
+            </alias-subnet>
+            <dhcprejectfrom type="TextField"/>
+            <type6 type="OptionField">
+                <Default>none</Default>
+                <Required>Y</Required>
+                <OptionValues>
+                    <none value="none">None</none>
+                    <static value="static">Static IPv6</static>
+                    <linklocal value="linklocal">Link-local</linklocal>
+                    <slaac value="slaac">SLAAC</slaac>
+                    <dhcp6 value="dhcp6">DHCPv6</dhcp6>
+                    <track6 value="track6">Track interface</track6>
+                    <idassoc6 value="idassoc6">Track interface (legacy)</idassoc6>
+                    <_6rd value="6rd">6rd</_6rd>
+                    <_6to4 value="6to4">6to4</_6to4>
+                    <pppoev6 value="pppoev6">PPPoE IPv6</pppoev6>
+                </OptionValues>
+            </type6>
+            <dhcp6-ia-pd-len type="IntegerField">
+                <MinimumValue>48</MinimumValue>
+                <MaximumValue>64</MaximumValue>
+            </dhcp6-ia-pd-len>
+            <dhcp6-ia-pd-send-hint type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </dhcp6-ia-pd-send-hint>
+            <dhcp6prefixonly type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </dhcp6prefixonly>
+            <dhcp6usev4iface type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </dhcp6usev4iface>
+            <dhcp6vlanprio type="IntegerField">
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>7</MaximumValue>
+            </dhcp6vlanprio>
+            <track6-interface type="TextField"/>
+            <track6-prefix-id type="IntegerField">
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>65535</MaximumValue>
+            </track6-prefix-id>
+            <track6_assoc_pd type="IntegerField">
+                <MinimumValue>0</MinimumValue>
+            </track6_assoc_pd>
             <ipaddr type="NetworkField">
                 <AddressFamily>ipv4</AddressFamily>
                 <NetMaskAllowed>N</NetMaskAllowed>
