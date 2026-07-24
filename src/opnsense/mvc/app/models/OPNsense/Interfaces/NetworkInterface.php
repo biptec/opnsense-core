@@ -140,6 +140,13 @@ class NetworkInterface extends BaseModel
                     if ($model_interfaces[$key]->$field->isFieldChanged()) {
                         $value = $interfaces[$key][$field];
                         if ($value === '') {
+                            if (
+                                in_array($field, ['ipaddr', 'ipaddrv6']) &&
+                                (string)$intf->$field !== '' &&
+                                filter_var((string)$intf->$field, FILTER_VALIDATE_IP) === false
+                            ) {
+                                continue;
+                            }
                             unset($intf->$field);
                         } else {
                             $intf->$field = $value;
