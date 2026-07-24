@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+<opnsense>
+  <interfaces>
+    <wan>
+      <if>em0</if>
+      <descr>WAN</descr>
+      <enable>1</enable>
+    </wan>
+  </interfaces>
+  <vlans/>
+</opnsense>

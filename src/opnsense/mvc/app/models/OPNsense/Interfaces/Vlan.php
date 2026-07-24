@@ -68,13 +68,14 @@ class Vlan extends BaseModel
                                 sprintf(gettext('The device name prefix "%s" is required.'), (string)$prefix),
                                 $key
                             ));
-                        } elseif (!preg_match("/^{$prefix}0([0-9\.]){1,10}$/", (string)$node)) {
+                        } elseif (!preg_match("/^{$prefix}[0-9][0-9\.]{0,10}$/", (string)$node)) {
                             $messages->appendMessage(new Message(
                                 sprintf(
                                     gettext(
-                                        'Only a maximum of 15 characters is allowed starting with "%s0" combined with ' .
-                                        'numeric characters and dots, e.g. "%s0.1.104".'
+                                        'Only a maximum of 15 characters is allowed starting with "%s" followed by ' .
+                                        'numeric characters and dots, e.g. "%s100" or "%s0.1.104".'
                                     ),
+                                    $prefix,
                                     $prefix,
                                     $prefix
                                 ),

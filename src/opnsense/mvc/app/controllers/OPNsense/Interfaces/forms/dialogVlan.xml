@@ -6,7 +6,7 @@
         <help>
           Leave empty to generate a device name. Custom names are possible, but only if the
           start of the name matches the required prefix and contains numeric characters or
-          dots, e.g. "vlan0.1.2" or "qinq0.3.4".
+          dots, e.g. "vlan100", "vlan0.1.2", or "qinq0.3.4".
         </help>
     </field>
     <field>
