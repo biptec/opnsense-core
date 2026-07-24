@@ -52,6 +52,104 @@ class NetworkInterfaceTest extends \PHPUnit\Framework\TestCase
         $this->assertSame('WAN_GW', $data['wan']['gateway']);
     }
 
+    public function testBasicSettingsAreLoaded(): void
+    {
+        $data = $this->newModel()->interface->getNodeContent()['wan'];
+        $this->assertSame('1', $data['enable']);
+        $this->assertSame('1', $data['blockpriv']);
+        $this->assertSame('0', $data['blockbogons']);
+        $this->assertSame('1', $data['gateway_interface']);
+        $this->assertSame('1', $data['promisc']);
+        $this->assertSame('02:00:00:00:00:01', $data['spoofmac']);
+        $this->assertSame('9000', $data['mtu']);
+        $this->assertSame('1400', $data['mss']);
+    }
+
+    public function testFilterOnlySettingsScheduleFilterReload(): void
+    {
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $node->blockbogons->setValue('1');
+        $node->mss->setValue('1300');
+        $this->assertTrue($model->serializeToConfig());
+
+        $config = Config::getInstance()->object()->interfaces->wan;
+        $this->assertSame('1', (string)$config->blockbogons);
+        $this->assertSame('1300', (string)$config->mss);
+        $this->assertSame('filter', $model->get_if_todo()['wan']['pending_action']);
+    }
+
+    public function testLinkSettingsScheduleReconfigure(): void
+    {
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $node->mtu->setValue('1500');
+        $node->spoofmac->setValue('02:00:00:00:00:02');
+        $this->assertTrue($model->serializeToConfig());
+
+        $config = Config::getInstance()->object()->interfaces->wan;
+        $this->assertSame('1500', (string)$config->mtu);
+        $this->assertSame('02:00:00:00:00:02', (string)$config->spoofmac);
+        $this->assertSame('reconfigure', $model->get_if_todo()['wan']['pending_action']);
+    }
+
+    public function testReconfigureTakesPrecedenceOverFilterReload(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->mtu->setValue('1500');
+        $this->assertTrue($model->serializeToConfig());
+
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->blockpriv->setValue('0');
+        $this->assertTrue($model->serializeToConfig());
+        $this->assertSame('reconfigure', $model->get_if_todo()['wan']['pending_action']);
+    }
+
+    public function testDisablingInterfaceRemovesEnableAndSchedulesReconfigure(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->enable->setValue('0');
+        $this->assertTrue($model->serializeToConfig());
+        $this->assertFalse(isset(Config::getInstance()->object()->interfaces->wan->enable));
+        $this->assertSame('reconfigure', $model->get_if_todo()['wan']['pending_action']);
+    }
+
+    public function testInvalidMacAddressIsRejected(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->spoofmac->setValue('not-a-mac');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testJumboMtuIsAcceptedAndOversizedMtuIsRejected(): void
+    {
+        $model = $this->newModel();
+        $model->getNodeByReference('interface.wan')->mtu->setValue('9000');
+        $this->assertEmpty($model->performValidation()->getMessages());
+
+        $model->getNodeByReference('interface.wan')->mtu->setValue('65536');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testNewInterfaceCopiesBasicSettingsAndSchedulesApply(): void
+    {
+        $model = $this->newModel();
+        $node = $model->interface->add();
+        $node->if->setValue('em1');
+        $node->descr->setValue('TEST');
+        $node->enable->setValue('1');
+        $node->mtu->setValue('9000');
+        $node->blockbogons->setValue('1');
+        $this->assertTrue($model->serializeToConfig());
+
+        $config = Config::getInstance()->object()->interfaces->opt1;
+        $this->assertSame('em1', (string)$config->if);
+        $this->assertSame('1', (string)$config->enable);
+        $this->assertSame('9000', (string)$config->mtu);
+        $this->assertSame('1', (string)$config->blockbogons);
+        $this->assertSame('reconfigure', $model->get_if_todo()['opt1']['pending_action']);
+    }
+
     public function testAddressRequiresPrefix(): void
     {
         $model = $this->newModel();

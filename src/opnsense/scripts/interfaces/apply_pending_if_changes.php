@@ -52,10 +52,16 @@ if (is_array($config['interfaces'])) {
             $device = $family == 6 ? get_real_interface($id, 'inet6') : $ifcfg['if'];
             interfaces_addresses_flush($device, $family);
         }
-        if (in_array($pending_act, ['delete', 'relink'])) {
+        if (
+            in_array($pending_act, ['delete', 'relink']) ||
+            ($pending_act == 'reconfigure' && !isset($ifcfg['enable']))
+        ) {
             interface_reset($id);
         }
-        if (in_array($pending_act, ['relink', 'reconfigure'])) {
+        if (
+            in_array($pending_act, ['relink', 'reconfigure']) &&
+            isset($ifcfg['enable'])
+        ) {
             $to_configure[] = $id;
         }
     }
