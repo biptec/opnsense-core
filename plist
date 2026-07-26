@@ -1140,6 +1140,7 @@
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/NetworkInterfaceTest/config.xml
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/VlanTest.php
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/VlanTest/config.xml
+/usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/VxLanTest.php
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Kea/FieldTypes/KeaOptionDataFieldTest.php
 /usr/local/opnsense/mvc/tests/phpunit.xml
 /usr/local/opnsense/mvc/tests/setup.php

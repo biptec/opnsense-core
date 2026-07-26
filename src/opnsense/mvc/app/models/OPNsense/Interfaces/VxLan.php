@@ -33,6 +33,33 @@ use OPNsense\Base\BaseModel;
 
 class VxLan extends BaseModel
 {
+    public static function requiresRecreate(array $current, array $desired): bool
+    {
+        foreach (
+            ['vxlanid', 'vxlanlocal', 'vxlanlocalport', 'vxlanremote', 'vxlanremoteport', 'vxlangroup']
+            as $parameter
+        ) {
+            $currentValue = (string)($current[$parameter] ?? '');
+            $desiredValue = (string)($desired[$parameter] ?? '');
+            if (str_ends_with($parameter, 'port')) {
+                $currentValue = $currentValue !== '' ? $currentValue : '4789';
+                $desiredValue = $desiredValue !== '' ? $desiredValue : '4789';
+            }
+            if ($currentValue !== $desiredValue) {
+                return true;
+            }
+        }
+
+        if (
+            array_key_exists('vxlandev', $current) &&
+            (string)$current['vxlandev'] !== (string)($desired['vxlandev'] ?? '')
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
     public function performValidation($validateFullModel = false)
     {
         $messages = parent::performValidation($validateFullModel);
