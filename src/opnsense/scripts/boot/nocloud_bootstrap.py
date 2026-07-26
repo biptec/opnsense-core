@@ -76,9 +76,14 @@ def select_network(network):
             continue
         for subnet in item.get("subnets", []):
             if isinstance(subnet, dict) and subnet.get("type") == "static":
+                address = str(subnet.get("address", "")).strip()
+                netmask = str(subnet.get("netmask", "")).strip()
+                if address and "/" not in address and netmask:
+                    prefix = ipaddress.ip_network(f"0.0.0.0/{netmask}").prefixlen
+                    address = f"{address}/{prefix}"
                 selected = {
                     "mac": str(item.get("mac_address", "")).lower(),
-                    "address": str(subnet.get("address", "")),
+                    "address": address,
                     "gateway": str(subnet.get("gateway", "")),
                 }
                 break
@@ -165,8 +170,17 @@ def update_config(user_data, network_data, device):
         node = ET.SubElement(system, "dnsserver")
         node.text = value
 
-    keys = user_data.get("ssh_authorized_keys", [])
-    if isinstance(keys, list) and keys:
+    keys = user_data.get("ssh_authorized_keys", user_data.get("ssh-authorized-keys", []))
+    if not isinstance(keys, list):
+        keys = []
+    for user in user_data.get("users", []):
+        if not isinstance(user, dict):
+            continue
+        nested = user.get("ssh_authorized_keys", user.get("ssh-authorized-keys", []))
+        if isinstance(nested, list):
+            keys.extend(str(value) for value in nested)
+    keys = list(dict.fromkeys(str(value).strip() for value in keys if str(value).strip()))
+    if keys:
         root_user = None
         for user in system.findall("user"):
             if user.findtext("name") == "root":
