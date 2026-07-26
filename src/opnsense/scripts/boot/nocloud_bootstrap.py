@@ -17,9 +17,9 @@ import yaml
 
 CONFIG = Path(os.getenv("BOOTSTRAP_CONFIG", "/conf/config.xml"))
 MARKER = Path(os.getenv("BOOTSTRAP_MARKER", "/conf/bootstrap.done"))
-API_FILE = Path(os.getenv("BOOTSTRAP_API_FILE", "/conf/bootstrap-api.json"))
 LOG_FILE = Path(os.getenv("BOOTSTRAP_LOG", "/var/log/bootstrap.log"))
 SOURCE_DIR = os.getenv("BOOTSTRAP_SOURCE_DIR")
+SUDOERS_DIR = Path(os.getenv("BOOTSTRAP_SUDOERS_DIR", "/usr/local/etc/sudoers.d"))
 CIDATA = Path("/dev/iso9660/cidata")
 MOUNT_DIR = Path("/var/run/bootstrap-cidata")
 
@@ -180,19 +180,60 @@ def update_config(user_data, network_data, device):
         if isinstance(nested, list):
             keys.extend(str(value) for value in nested)
     keys = list(dict.fromkeys(str(value).strip() for value in keys if str(value).strip()))
+
+    ssh_username = str(user_data.get("user", "")).strip()
+    if keys and not ssh_username:
+        raise ValueError("NoCloud SSH keys require a non-empty user field")
+    if ssh_username:
+        if ssh_username == "root":
+            raise ValueError("NoCloud SSH user must not be root")
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", ssh_username):
+            raise ValueError(f"Invalid NoCloud SSH username {ssh_username!r}")
+
     if keys:
-        root_user = None
+        ssh_user = None
+        used_uids = set()
         for user in system.findall("user"):
-            if user.findtext("name") == "root":
-                root_user = user
-                break
-        if root_user is None:
-            raise ValueError("Root user is missing from config.xml")
+            try:
+                used_uids.add(int(user.findtext("uid", "")))
+            except ValueError:
+                pass
+            if user.findtext("name") == ssh_username:
+                ssh_user = user
+        if ssh_user is None:
+            ssh_user = ET.SubElement(system, "user")
+
+        user_uid = ssh_user.findtext("uid", "")
+        if not user_uid:
+            uid = 2000
+            while uid in used_uids:
+                uid += 1
+            user_uid = str(uid)
+
         encoded = base64.b64encode(("\n".join(keys) + "\n").encode()).decode()
-        set_text(root_user, "authorizedkeys", encoded)
+        set_text(ssh_user, "uid", user_uid)
+        set_text(ssh_user, "name", ssh_username)
+        set_text(ssh_user, "disabled", "0")
+        set_text(ssh_user, "scope", "user")
+        set_text(ssh_user, "authorizedkeys", encoded)
+        set_text(ssh_user, "shell", "/bin/sh")
+        set_text(ssh_user, "password", "*")
+        set_text(ssh_user, "descr", "Proxmox automation user")
+
+        admins = None
+        for group in system.findall("group"):
+            if group.findtext("name") == "admins":
+                admins = group
+                break
+        if admins is None:
+            raise ValueError("System administrators group is missing from config.xml")
+        if user_uid not in [item.text for item in admins.findall("member")]:
+            ET.SubElement(admins, "member").text = user_uid
+
         ssh = ensure(system, "ssh")
+        set_text(ssh, "group", "admins")
         set_text(ssh, "enabled", "enabled")
-        set_text(ssh, "permitrootlogin", "1")
+        set_text(ssh, "permitrootlogin", "0")
         set_text(ssh, "passwordauth", "0")
 
     backup_dir = CONFIG.parent / "backup"
@@ -205,16 +246,17 @@ def update_config(user_data, network_data, device):
     tree.write(tmp_name, encoding="utf-8", xml_declaration=True)
     os.chmod(tmp_name, 0o600)
     os.replace(tmp_name, CONFIG)
+
+    if keys:
+        SUDOERS_DIR.mkdir(parents=True, exist_ok=True, mode=0o750)
+        sudoers_file = SUDOERS_DIR / ssh_username
+        sudoers_file.write_text(
+            f"{ssh_username} ALL=(ALL) NOPASSWD: ALL\n",
+            encoding="utf-8",
+        )
+        os.chmod(sudoers_file, 0o440)
+
     return address, selected["gateway"], nameservers
-
-
-def create_api_key():
-    if os.getenv("BOOTSTRAP_SKIP_API") == "1":
-        return
-    result = run(["/usr/local/sbin/opnsense-apikey", "-u", "root", "-j", "create"])
-    payload = json.loads(result.stdout)
-    API_FILE.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-    os.chmod(API_FILE, 0o600)
 
 
 def source_directory():
@@ -244,7 +286,6 @@ def main():
         if not device:
             raise ValueError(f"No interface matches management MAC {selected['mac']}")
         address, gateway, nameservers = update_config(user_data, network_data, device)
-        create_api_key()
         MARKER.write_text("completed\n", encoding="utf-8")
         os.chmod(MARKER, 0o600)
         log(f"configured {device} with {address}; gateway={'set' if gateway else 'none'}; dns={len(nameservers)}")
