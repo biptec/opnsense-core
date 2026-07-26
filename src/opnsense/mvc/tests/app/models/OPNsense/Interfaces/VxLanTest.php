@@ -28,10 +28,42 @@
 
 namespace tests\OPNsense\Interfaces;
 
+use OPNsense\Core\AppConfig;
+use OPNsense\Core\Config;
 use OPNsense\Interfaces\VxLan;
 
 class VxLanTest extends \PHPUnit\Framework\TestCase
 {
+    private string $configDir;
+
+    protected function setUp(): void
+    {
+        $this->configDir = sys_get_temp_dir() . '/vxlan-' . uniqid();
+        mkdir($this->configDir, 0700, true);
+        copy(__DIR__ . '/VxLanTest/config.xml', $this->configDir . '/config.xml');
+        (new AppConfig())->update('application.configDir', $this->configDir);
+        Config::getInstance()->forceReload();
+    }
+
+    protected function tearDown(): void
+    {
+        @unlink($this->configDir . '/config.xml');
+        @rmdir($this->configDir);
+    }
+
+    private function addVxlan(VxLan $model, int $deviceId, string $remote): void
+    {
+        $vxlan = $model->vxlan->Add();
+        $vxlan->deviceId = $deviceId;
+        $vxlan->vxlanid = '4242';
+        $vxlan->vxlanlocal = '172.31.255.1';
+        $vxlan->vxlanlocalport = '4789';
+        $vxlan->vxlanremote = $remote;
+        $vxlan->vxlanremoteport = '4789';
+        $vxlan->vxlangroup = '';
+        $vxlan->vxlandev = '';
+    }
+
     private array $settings = [
         'vxlanid' => '4242',
         'vxlanlocal' => '172.31.255.1',
@@ -83,4 +115,33 @@ class VxLanTest extends \PHPUnit\Framework\TestCase
         $desired['vxlandev'] = 'vtnet1';
         $this->assertTrue(VxLan::requiresRecreate($current, $desired));
     }
+
+    public function testDuplicateConfigurationIsRejected(): void
+    {
+        $model = new VxLan();
+        $this->addVxlan($model, 1, '172.31.255.2');
+        $this->addVxlan($model, 2, '172.31.255.2');
+
+        $duplicates = [];
+        foreach ($model->performValidation(true) as $message) {
+            if ($message->getMessage() === 'An identical VXLAN configuration already exists.') {
+                $duplicates[] = $message->getField();
+            }
+        }
+        $this->assertCount(2, $duplicates);
+    }
+
+    public function testSameVniWithDifferentRemoteIsAllowed(): void
+    {
+        $model = new VxLan();
+        $this->addVxlan($model, 1, '172.31.255.2');
+        $this->addVxlan($model, 2, '172.31.255.3');
+
+        $messages = [];
+        foreach ($model->performValidation(true) as $message) {
+            $messages[] = $message->getMessage();
+        }
+        $this->assertNotContains('An identical VXLAN configuration already exists.', $messages);
+    }
+
 }

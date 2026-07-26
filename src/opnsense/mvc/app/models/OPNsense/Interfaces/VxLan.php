@@ -60,19 +60,61 @@ class VxLan extends BaseModel
         return false;
     }
 
+    public static function configurationKey(array $settings): string
+    {
+        foreach (['vxlanlocalport', 'vxlanremoteport'] as $parameter) {
+            if (empty($settings[$parameter])) {
+                $settings[$parameter] = '4789';
+            }
+        }
+        return implode("\0", [
+            (string)($settings['vxlanid'] ?? ''),
+            (string)($settings['vxlanlocal'] ?? ''),
+            (string)($settings['vxlanlocalport'] ?? ''),
+            (string)($settings['vxlanremote'] ?? ''),
+            (string)($settings['vxlanremoteport'] ?? ''),
+            (string)($settings['vxlangroup'] ?? ''),
+            (string)($settings['vxlandev'] ?? ''),
+        ]);
+    }
+
     public function performValidation($validateFullModel = false)
     {
         $messages = parent::performValidation($validateFullModel);
+        $items = iterator_to_array($this->vxlan->iterateItems());
+        $configurationKey = static function ($vxlan): string {
+            return self::configurationKey([
+                'vxlanid' => (string)$vxlan->vxlanid,
+                'vxlanlocal' => (string)$vxlan->vxlanlocal,
+                'vxlanlocalport' => (string)$vxlan->vxlanlocalport,
+                'vxlanremote' => (string)$vxlan->vxlanremote,
+                'vxlanremoteport' => (string)$vxlan->vxlanremoteport,
+                'vxlangroup' => (string)$vxlan->vxlangroup,
+                'vxlandev' => (string)$vxlan->vxlandev,
+            ]);
+        };
+        $configurationCounts = [];
+        foreach ($items as $vxlan) {
+            $signature = $configurationKey($vxlan);
+            $configurationCounts[$signature] = ($configurationCounts[$signature] ?? 0) + 1;
+        }
 
-        // Initialize variables
-        foreach ($this->vxlan->iterateItems() as $vxlan) {
+        foreach ($items as $vxlan) {
             $key = $vxlan->__reference;
-            $vxlangroup = (string) $vxlan->vxlangroup;
-            $vxlanremote = (string) $vxlan->vxlanremote;
-            $vxlandev = (string) $vxlan->vxlandev;
+            $vxlangroup = (string)$vxlan->vxlangroup;
+            $vxlanremote = (string)$vxlan->vxlanremote;
+            $vxlandev = (string)$vxlan->vxlandev;
 
             // Validate that values in Fields have been changed, prevents configuration save lockout when invalid data is present.
             if ($validateFullModel || $vxlan->isFieldChanged()) {
+                if ($configurationCounts[$configurationKey($vxlan)] > 1) {
+                    $messages->appendMessage(new Message(
+                        gettext("An identical VXLAN configuration already exists."),
+                        $key . ".vxlanid",
+                        "DuplicateConfiguration"
+                    ));
+                }
+
                 // Validation 1: At least one of vxlangroup and vxlanremote must be populated, but not both.
                 if (
                     (!empty($vxlangroup) && !empty($vxlanremote)) ||
