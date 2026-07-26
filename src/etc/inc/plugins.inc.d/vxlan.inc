@@ -82,7 +82,6 @@ function vxlan_configure_do($verbose = false, $device = null)
     // (re)configure vxlan devices
     foreach ($vxlans as $vxlan) {
         $device_name = "vxlan{$vxlan->deviceId}";
-        $isChanged = false;
 
         if ($device !== null && $device != $device_name) {
             $configured_devices[] = $device_name;
@@ -95,13 +94,10 @@ function vxlan_configure_do($verbose = false, $device = null)
         }
 
         $configured_devices[] = $device_name;
+        $device_exists = !empty($interfaces_details[$device_name]);
         $current_settings = [];
 
-        if (empty($interfaces_details[$device_name])) {
-            // new device
-            mwexecf('/sbin/ifconfig vxlan create name %s', array($device_name));
-            $isChanged = true;
-        } else {
+        if ($device_exists) {
             $current_settings['vxlanid'] = $interfaces_details[$device_name]['vxlan']['vni'];
             foreach (['local', 'remote', 'group'] as $target) {
                 if (!empty($interfaces_details[$device_name]['vxlan'][$target])) {
@@ -112,9 +108,10 @@ function vxlan_configure_do($verbose = false, $device = null)
             }
         }
 
-        // gather settings, detect changes
+        // gather desired settings
+        $desired_settings = [];
         $ifcnfcmd = '/sbin/ifconfig %s';
-        $ifcnfcmdp = array($device_name);
+        $ifcnfcmdp = [$device_name];
         foreach (
             [
             'vxlanid', 'vxlanlocal', 'vxlanremote', 'vxlanlocalport', 'vxlanremoteport', 'vxlangroup', 'vxlandev'
@@ -131,18 +128,18 @@ function vxlan_configure_do($verbose = false, $device = null)
             } else {
                 $value = (string)$vxlan->$param;
             }
+            $desired_settings[$param] = $value;
             if ($value != '') {
                 $ifcnfcmd .= " {$param} %s ";
                 $ifcnfcmdp[] = $value;
             }
-            if (isset($current_settings[$param]) && $current_settings[$param] != $value) {
-                // need to bring existing down to apply changes
-                mwexecf('/sbin/ifconfig %s down', [$device_name]);
-                $isChanged = true;
-            }
         }
 
-        if ($isChanged) {
+        if (!$device_exists || \OPNsense\Interfaces\VxLan::requiresRecreate($current_settings, $desired_settings)) {
+            if ($device_exists) {
+                mwexecf('/sbin/ifconfig %s destroy', [$device_name]);
+            }
+            mwexecf('/sbin/ifconfig vxlan create name %s', [$device_name]);
             mwexecf($ifcnfcmd . ' up', $ifcnfcmdp);
             $changed_devices[] = $device_name;
         }
