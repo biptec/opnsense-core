@@ -130,6 +130,7 @@
 /usr/local/etc/rc.syshook.d/early/05-upgrade
 /usr/local/etc/rc.syshook.d/early/10-configd
 /usr/local/etc/rc.syshook.d/early/15-templates
+/usr/local/etc/rc.syshook.d/early/20-nocloud-bootstrap
 /usr/local/etc/rc.syshook.d/early/90-carp
 /usr/local/etc/rc.syshook.d/import/20-importer
 /usr/local/etc/rc.syshook.d/monitor/20-recover
@@ -1150,6 +1151,7 @@
 /usr/local/opnsense/scripts/auth/list_group_members.php
 /usr/local/opnsense/scripts/auth/sync_group.php
 /usr/local/opnsense/scripts/auth/sync_user.php
+/usr/local/opnsense/scripts/boot/nocloud_bootstrap.py
 /usr/local/opnsense/scripts/captiveportal/allow.py
 /usr/local/opnsense/scripts/captiveportal/cp-background-process.py
 /usr/local/opnsense/scripts/captiveportal/disconnect.py
