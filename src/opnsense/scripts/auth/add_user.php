@@ -32,14 +32,13 @@ require_once('legacy_bindings.inc');
 use OPNsense\Core\Config;
 use OPNsense\Auth\User;
 
-$opts = getopt('hu:o', array(), $optind);
-$args = array_slice($argv, $optind);
+$opts = getopt('hu:o:', [], $optind);
 
 if (isset($opts['h']) || empty($opts['u'])) {
     echo "Usage: add_user.php [-h] \n";
     echo "\t-h show this help text and exit\n";
     echo "\t-u [required] username\n";
-    echo "\t-o origin (default=automation)";
+    echo "\t-o origin (default=automation)\n";
     exit(-1);
 } else {
     Config::getInstance()->lock();
@@ -70,7 +69,7 @@ if (isset($opts['h']) || empty($opts['u'])) {
         if ($usermdl->serializeToConfig(false, true)) {
             Config::getInstance()->save();
         }
-        configdp_run('auth user changed', [$userent['name']]);
+        configdp_run('auth user changed', [(string)$user->name]);
         echo json_encode(["status" => "ok", "uid" => (string)$user->uid, "name" => (string)$user->name]);
     } else {
         echo json_encode(["status" => "failed", "messages" => $input_errors]);
