@@ -1078,7 +1078,12 @@
 /usr/local/opnsense/mvc/script/load_phalcon.php
 /usr/local/opnsense/mvc/script/run_migrations.php
 /usr/local/opnsense/mvc/script/run_validations.php
+/usr/local/opnsense/mvc/tests/api/auth_add_user.sh
+/usr/local/opnsense/mvc/tests/api/interfaces_assignment_address_modes.sh
+/usr/local/opnsense/mvc/tests/api/interfaces_assignment_basic_settings.sh
+/usr/local/opnsense/mvc/tests/api/interfaces_assignment_static_addressing.sh
 /usr/local/opnsense/mvc/tests/app/config/config.php
+/usr/local/opnsense/mvc/tests/app/library/OPNsense/Auth/ApiKeyCommandTest.php
 /usr/local/opnsense/mvc/tests/app/library/OPNsense/Core/ConfigConfig/backup/array.xml
 /usr/local/opnsense/mvc/tests/app/library/OPNsense/Core/ConfigConfig/backup/object.xml
 /usr/local/opnsense/mvc/tests/app/library/OPNsense/Core/ConfigTest.php
@@ -1131,6 +1136,10 @@
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Base/FieldTypes/VirtualIPFieldTest.php
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Base/FieldTypes/VirtualIPFieldTest/config.xml
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Dnsmasq/FieldTypes/HostnameFieldTest.php
+/usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/NetworkInterfaceTest.php
+/usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/NetworkInterfaceTest/config.xml
+/usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/VlanTest.php
+/usr/local/opnsense/mvc/tests/app/models/OPNsense/Interfaces/VlanTest/config.xml
 /usr/local/opnsense/mvc/tests/app/models/OPNsense/Kea/FieldTypes/KeaOptionDataFieldTest.php
 /usr/local/opnsense/mvc/tests/phpunit.xml
 /usr/local/opnsense/mvc/tests/setup.php
