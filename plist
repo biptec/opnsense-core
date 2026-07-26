@@ -1082,6 +1082,7 @@
 /usr/local/opnsense/mvc/tests/api/interfaces_assignment_address_modes.sh
 /usr/local/opnsense/mvc/tests/api/interfaces_assignment_basic_settings.sh
 /usr/local/opnsense/mvc/tests/api/interfaces_assignment_static_addressing.sh
+/usr/local/opnsense/mvc/tests/api/interfaces_vxlan_guardrails.sh
 /usr/local/opnsense/mvc/tests/app/config/config.php
 /usr/local/opnsense/mvc/tests/app/library/OPNsense/Auth/ApiKeyCommandTest.php
 /usr/local/opnsense/mvc/tests/app/library/OPNsense/Core/ConfigConfig/backup/array.xml

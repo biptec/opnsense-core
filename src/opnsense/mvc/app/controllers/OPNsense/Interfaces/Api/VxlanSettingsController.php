@@ -29,12 +29,27 @@
 namespace OPNsense\Interfaces\Api;
 
 use OPNsense\Core\Backend;
+use OPNsense\Core\Config;
+use OPNsense\Base\UserException;
 use OPNsense\Base\ApiMutableModelControllerBase;
 
 class VxlanSettingsController extends ApiMutableModelControllerBase
 {
     protected static $internalModelName = 'vxlan';
     protected static $internalModelClass = 'OPNsense\Interfaces\VxLan';
+
+    private function interfaceAssigned($if)
+    {
+        $configHandle = Config::getInstance()->object();
+        if (!empty($configHandle->interfaces)) {
+            foreach ($configHandle->interfaces->children() as $node) {
+                if ((string)$node->if == $if) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
 
     public function searchItemAction()
     {
@@ -56,9 +71,19 @@ class VxlanSettingsController extends ApiMutableModelControllerBase
         return $this->getBase("vxlan", "vxlan", $uuid);
     }
 
-    public function delItemAction($uuid)
+    public function delItemAction($uuids)
     {
-        return $this->delBase("vxlan", $uuid);
+        Config::getInstance()->lock();
+        foreach (!empty($uuids) ? explode(',', $uuids) : [] as $uuid) {
+            $node = $this->getModel()->getNodeByReference('vxlan.' . $uuid);
+            $device = $node != null ? 'vxlan' . (string)$node->deviceId : null;
+            if ($device != null && $this->interfaceAssigned($device)) {
+                throw new UserException(
+                    gettext("This VXLAN cannot be deleted because it is assigned as an interface.")
+                );
+            }
+        }
+        return $this->delBase("vxlan", $uuids);
     }
 
     public function reconfigureAction()
