@@ -1,3 +1,0 @@
-#!/bin/sh
-
-/usr/local/opnsense/scripts/boot/nocloud_bootstrap.py
