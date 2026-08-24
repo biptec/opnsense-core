@@ -56,6 +56,12 @@ class NetworkInterface extends BaseModel
     ];
     private const MANAGED_IPV4_MODES = ['none', 'static', 'dhcp'];
     private const MANAGED_IPV6_MODES = ['none', 'static', 'linklocal', 'slaac', 'dhcp6', 'track6', 'idassoc6'];
+    private const IDENTIFIER_PATTERN = '/^[a-z][a-z0-9_]{0,31}$/';
+
+    private function identifier_is_reserved($identifier)
+    {
+        return in_array($identifier, ['lan', 'wan']) || preg_match('/^opt[0-9]+$/', $identifier);
+    }
 
     private function address_mode($address, $family)
     {
@@ -240,6 +246,7 @@ class NetworkInterface extends BaseModel
             $node = $this->interface->add($key);
             $node->descr = (string)$intf->descr;
             $node->identifier = $key;
+            $node->identifier->markUnchanged();
             $node->lock = empty((string)$intf->lock) ? '0' : '1';
             foreach (array_merge(self::RECONFIGURE_FIELDS, self::FILTER_FIELDS) as $field) {
                 if (in_array($field, self::BOOLEAN_FIELDS)) {
@@ -352,7 +359,16 @@ class NetworkInterface extends BaseModel
 
         foreach ($interfaces as $key => $intf) {
             if (!isset(Config::getInstance()->object()->interfaces->$key)) {
-                $new_key = 'opt' . $next_if;
+                $requested_key = trim($intf['identifier']);
+                if ($requested_key !== '') {
+                    $new_key = $requested_key;
+                } else {
+                    while (in_array('opt' . $next_if, $existing_ifnames)) {
+                        $next_if++;
+                    }
+                    $new_key = 'opt' . $next_if;
+                    $next_if++;
+                }
                 $newif = Config::getInstance()->object()->interfaces->addChild($new_key);
                 $newif->if = $intf['if'];
                 $newif->descr = $intf['descr'];
@@ -367,7 +383,7 @@ class NetworkInterface extends BaseModel
                 $this->serialize_family($newif, $model_interfaces[$key], $intf, 4);
                 $this->serialize_family($newif, $model_interfaces[$key], $intf, 6);
                 $this->store_if_todo($new_key, ['pending_action' => 'reconfigure']);
-                $next_if++;
+                $existing_ifnames[] = $new_key;
             }
         }
         return true;
@@ -376,11 +392,39 @@ class NetworkInterface extends BaseModel
     public function performValidation($validateFullModel = false)
     {
         $messages = parent::performValidation($validateFullModel);
+        $pending_identifiers = [];
         foreach ($this->interface->iterateItems() as $ifname => $if) {
             if (!$validateFullModel && !$if->isFieldChanged()) {
                 continue;
             }
             $key = $if->__reference;
+            $identifier = trim($if->identifier->getValue());
+            $is_existing = isset(Config::getInstance()->object()->interfaces->$ifname);
+            if ($is_existing && $identifier !== $ifname) {
+                $messages->appendMessage(new Message(
+                    gettext('The interface identifier is immutable after creation.'),
+                    $key . '.identifier'
+                ));
+            } elseif (!$is_existing && $identifier !== '') {
+                if (!preg_match(self::IDENTIFIER_PATTERN, $identifier)) {
+                    $messages->appendMessage(new Message(
+                        gettext('The interface identifier must start with a lowercase letter and contain only lowercase letters, digits, and underscores (maximum 32 characters).'),
+                        $key . '.identifier'
+                    ));
+                } elseif ($this->identifier_is_reserved($identifier)) {
+                    $messages->appendMessage(new Message(
+                        gettext('The interface identifier is reserved for automatic or built-in interface assignments.'),
+                        $key . '.identifier'
+                    ));
+                } elseif (isset(Config::getInstance()->object()->interfaces->$identifier) || isset($pending_identifiers[$identifier])) {
+                    $messages->appendMessage(new Message(
+                        gettext('The interface identifier is already in use.'),
+                        $key . '.identifier'
+                    ));
+                } else {
+                    $pending_identifiers[$identifier] = true;
+                }
+            }
             foreach ([
                 4 => ['type', 'ipaddr', 'subnet', 'gateway', 'inet', self::MANAGED_IPV4_MODES],
                 6 => ['type6', 'ipaddrv6', 'subnetv6', 'gatewayv6', 'inet6', self::MANAGED_IPV6_MODES]

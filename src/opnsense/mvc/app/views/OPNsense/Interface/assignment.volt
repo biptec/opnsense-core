@@ -41,6 +41,13 @@
                 }
             }
         );
+        $('#{{formGridAssignment["edit_dialog_id"]}}').on('opnsense_bootgrid_mapped', function(e, actionType) {
+            const identifier = $('#interface\\.identifier');
+            identifier.prop('readonly', actionType !== 'add');
+            if (actionType === 'add') {
+                identifier.val('');
+            }
+        });
         $("#reconfigureAct").SimpleActionButton();
 
     });

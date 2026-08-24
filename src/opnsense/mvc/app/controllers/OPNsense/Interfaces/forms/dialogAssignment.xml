@@ -11,8 +11,8 @@
     <field>
         <id>interface.identifier</id>
         <label>Identifier</label>
-        <type>info</type>
-        <help>Technical identifier of the interface, used by hasync for example.</help>
+        <type>text</type>
+        <help>Stable technical identifier. Leave empty when creating an assignment to use automatic optN allocation. The identifier cannot be changed after creation.</help>
     </field>
     <field>
         <id>interface.lock</id>
