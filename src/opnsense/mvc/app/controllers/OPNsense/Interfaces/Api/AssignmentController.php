@@ -45,7 +45,18 @@ class AssignmentController extends ApiMutableModelControllerBase
 
     public function setItemAction($ifname)
     {
-        return $this->setBase("interface", "interface", $ifname);
+        if ($this->request->isPost() && $this->request->hasPost('interface')) {
+            $payload = $this->request->getPost('interface');
+            if (is_array($payload) && !empty($payload['identifier']) && $payload['identifier'] !== $ifname) {
+                return [
+                    'result' => 'failed',
+                    'validations' => [
+                        'interface.identifier' => gettext('The interface identifier is immutable after creation.')
+                    ]
+                ];
+            }
+        }
+        return $this->setBase("interface", "interface", $ifname, ['identifier' => $ifname]);
     }
 
     public function addItemAction()

@@ -1,6 +1,6 @@
 <model>
     <mount>:memory:</mount>
-    <version>0.0.4</version>
+    <version>0.0.5</version>
     <description>Interface assignments</description>
     <items>
         <interface type="ArrayField">

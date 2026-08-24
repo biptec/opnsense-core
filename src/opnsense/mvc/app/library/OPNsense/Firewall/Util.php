@@ -38,6 +38,14 @@ use OPNsense\Firewall\Alias;
 class Util
 {
     /**
+     * Test whether a name is a configured logical interface identifier.
+     */
+    public static function isConfiguredInterface(string $interface): bool
+    {
+        return isset(Config::getInstance()->object()->interfaces->{$interface});
+    }
+
+    /**
      * @var null|Alias reference to alias object
      */
     private static $aliasObject = null;
@@ -683,6 +691,9 @@ class Util
                 $lockout_if = $if;
                 break;
             }
+        }
+        if (empty($lockout_if) && !empty($iflist)) {
+            $lockout_if = reset($iflist);
         }
         if (empty($lockout_if)) {
             return [];

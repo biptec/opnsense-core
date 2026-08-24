@@ -782,6 +782,9 @@ function get_primary_interface_from_list($iflist = null)
             break;
         }
     }
+    if ($ret === null && !empty($iflist)) {
+        $ret = reset($iflist);
+    }
 
     return $ret;
 }

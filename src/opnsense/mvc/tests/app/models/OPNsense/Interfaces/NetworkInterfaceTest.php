@@ -131,6 +131,61 @@ class NetworkInterfaceTest extends \PHPUnit\Framework\TestCase
         $this->assertNotEmpty($model->performValidation()->getMessages());
     }
 
+    public function testNewInterfaceUsesExplicitIdentifier(): void
+    {
+        $model = $this->newModel();
+        $node = $model->interface->add();
+        $node->identifier->setValue('transit');
+        $node->if->setValue('em1');
+        $node->descr->setValue('Transit');
+        $node->enable->setValue('1');
+        $this->assertEmpty($model->performValidation()->getMessages());
+        $this->assertTrue($model->serializeToConfig());
+
+        $config = Config::getInstance()->object()->interfaces->transit;
+        $this->assertSame('em1', (string)$config->if);
+        $this->assertSame('Transit', (string)$config->descr);
+        $this->assertSame('reconfigure', $model->get_if_todo()['transit']['pending_action']);
+        $this->assertFalse(isset(Config::getInstance()->object()->interfaces->opt1));
+    }
+
+    public function testExplicitIdentifierValidation(): void
+    {
+        foreach (['Transit', 'transit-net', 'wan', 'lan', 'opt1'] as $identifier) {
+            $model = $this->newModel();
+            $node = $model->interface->add();
+            $node->identifier->setValue($identifier);
+            $node->if->setValue('em1');
+            $node->descr->setValue('TEST');
+            $this->assertNotEmpty(
+                $model->performValidation()->getMessages(),
+                sprintf('identifier %s should be rejected', $identifier)
+            );
+        }
+    }
+
+    public function testDuplicateExplicitIdentifierIsRejected(): void
+    {
+        $config = Config::getInstance()->object()->interfaces->addChild('transit');
+        $config->if = 'em2';
+        $config->descr = 'Existing transit';
+
+        $model = $this->newModel();
+        $node = $model->interface->add();
+        $node->identifier->setValue('transit');
+        $node->if->setValue('em1');
+        $node->descr->setValue('Duplicate transit');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
+    public function testExistingIdentifierIsImmutable(): void
+    {
+        $model = $this->newModel();
+        $node = $model->getNodeByReference('interface.wan');
+        $node->identifier->setValue('transit');
+        $this->assertNotEmpty($model->performValidation()->getMessages());
+    }
+
     public function testNewInterfaceCopiesBasicSettingsAndSchedulesApply(): void
     {
         $model = $this->newModel();

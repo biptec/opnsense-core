@@ -53,7 +53,7 @@ abstract class Rule
             foreach ($this->interfaceMapping as $ifname => $payload) {
                 if (!empty($payload['if'])) {
                     static::$aliasMap[$ifname] = sprintf("(%s:network)", $payload['if']);
-                    if (preg_match("/^(wan|lan|opt[0-9]+)$/", $ifname, $matches)) {
+                    if (Util::isConfiguredInterface($ifname)) {
                         static::$aliasMap[$ifname . 'ip'] = sprintf("(%s)", $payload['if']);
                     }
                 }
