@@ -30,6 +30,7 @@ namespace OPNsense\Core\Api;
 
 use OPNsense\Base\ApiControllerBase;
 use OPNsense\Core\Backend;
+use OPNsense\Core\Hasync;
 
 /**
  * Class HasyncStatusController
@@ -50,10 +51,39 @@ class HasyncStatusController extends ApiControllerBase
         return json_decode((new Backend())->configdRun('system ha exec version'), true);
     }
 
+    private function selectedSyncItems(): array
+    {
+        $options = json_decode((new Backend())->configdRun('system ha options'), true);
+        if (!is_array($options)) {
+            return [];
+        }
+        $selected = array_filter(explode(',', (string)(new Hasync())->syncitems));
+        return array_intersect_key($options, array_flip($selected));
+    }
+
     public function servicesAction()
     {
         $data = json_decode((new Backend())->configdRun('system ha services_cached'), true);
         $records = !empty($data['response']) ? $data['response'] : [];
+        foreach ($this->selectedSyncItems() as $item => $description) {
+            $matched = false;
+            foreach ($records as &$record) {
+                if (strcasecmp(trim((string)($record['description'] ?? '')), trim((string)$description)) === 0) {
+                    $record['sync_item'] = $item;
+                    $matched = true;
+                    break;
+                }
+            }
+            unset($record);
+            if (!$matched) {
+                $records[] = [
+                    'name' => $item,
+                    'description' => $description,
+                    'sync_item' => $item,
+                    'nocheck' => true,
+                ];
+            }
+        }
         return $this->searchRecordsetBase($records, null, null, function (&$record) {
             $record['uid'] = $record['name'] ?? '';
             if (!empty($record['id'])) {
@@ -61,6 +91,40 @@ class HasyncStatusController extends ApiControllerBase
             }
             return true;
         });
+    }
+
+    public function syncAction()
+    {
+        $items = $this->request->getPost('items');
+        if (!$this->request->isPost() || !is_array($items)) {
+            return ['status' => 'failed', 'message' => 'one or more HA synchronization items are required'];
+        }
+        $requested = array_values(array_unique(array_filter(array_map(
+            fn($item) => is_string($item) ? trim($item) : '',
+            $items
+        ))));
+        if (count($requested) === 0 || array_filter($requested, fn($item) => !preg_match('/^[A-Za-z0-9_-]+$/D', $item))) {
+            return ['status' => 'failed', 'message' => 'invalid HA synchronization item'];
+        }
+
+        $selected = $this->selectedSyncItems();
+        foreach ($requested as $item) {
+            if (!isset($selected[$item])) {
+                return ['status' => 'failed', 'message' => sprintf('HA synchronization item %s is not enabled in High Availability settings', $item)];
+            }
+        }
+
+        $result = json_decode(
+            (new Backend())->configdpRun('system ha exec', ['exec_sync', implode(',', $requested), ''], false, 300),
+            true
+        );
+        if (!is_array($result) || ($result['status'] ?? '') !== 'ok') {
+            return [
+                'status' => 'failed',
+                'message' => is_array($result) ? trim((string)($result['message'] ?? 'HA synchronization failed')) : 'invalid HA synchronization response',
+            ];
+        }
+        return ['status' => 'ok', 'items' => $requested];
     }
 
     public function stopAction($service = null, $service_id = null)

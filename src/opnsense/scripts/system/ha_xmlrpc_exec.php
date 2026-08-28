@@ -54,8 +54,16 @@ try {
             echo json_encode(['status' => 'done']);
             break;
         case 'exec_sync':
-            configd_run('filter sync');
-            echo json_encode(['status' => 'done']);
+            if ($service !== '') {
+                $result = trim(configdp_run('filter sync_selected', [$service]));
+                if ($result !== 'ok') {
+                    throw new \RuntimeException('selective HA configuration synchronization failed');
+                }
+                echo json_encode(['status' => 'ok']);
+            } else {
+                configd_run('filter sync');
+                echo json_encode(['status' => 'done']);
+            }
             break;
         case 'version':
             $payload = xmlrpc_execute('opnsense.firmware_version');

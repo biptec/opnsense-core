@@ -376,8 +376,13 @@ function plugins_xmlrpc_sync()
         $func = sprintf('%s_xmlrpc_sync', $name);
         if (function_exists($func)) {
             foreach ($func() as $helper) {
-                if (!empty($helper['id']) && !empty($helper['section'])) {
+                $has_sync_handler = !empty($helper['section']) ||
+                    !empty($helper['sync_validate']) ||
+                    !empty($helper['sync_prepare']) ||
+                    !empty($helper['sync_finalize']);
+                if (!empty($helper['id']) && $has_sync_handler) {
                     $sync_settings[$helper['id']] = $helper;
+                    $sync_settings[$helper['id']]['section'] = $helper['section'] ?? '';
                     if (empty($helper['help'])) {
                         $sync_settings[$helper['id']]['help'] = sprintf(gettext('Synchronize the %s configuration to the other HA host.'), $helper['description']);
                     }
