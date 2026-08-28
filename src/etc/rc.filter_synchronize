@@ -251,17 +251,44 @@ function carp_sync_xml($url, $username, $password, $sections, $debug)
     return true;
 }
 
+function ha_sync_callback(array $sync_item, string $hook): void
+{
+    if (empty($sync_item[$hook])) {
+        return;
+    }
+    if (!is_string($sync_item[$hook]) || !is_callable($sync_item[$hook])) {
+        throw new RuntimeException(sprintf('HA synchronization callback %s is not callable', $hook));
+    }
+    $result = call_user_func($sync_item[$hook]);
+    if ($result === false || (is_array($result) && ($result['status'] ?? 'ok') !== 'ok')) {
+        throw new RuntimeException(trim((string)($result['message'] ?? sprintf('HA synchronization callback %s failed', $hook))));
+    }
+}
+
 if (!empty($config['hasync'])) {
     $hasync = $config['hasync'];
     $enable_debug = in_array('debug', $argv);
     $restart_services = in_array('restart_services', $argv);
     $pre_check_master = in_array('pre_check_master', $argv);
+    $requested_syncitems = null;
+    foreach ($argv as $argument) {
+        if (str_starts_with($argument, 'syncitems=')) {
+            if ($requested_syncitems !== null) {
+                throw new RuntimeException('syncitems may only be specified once');
+            }
+            $requested_syncitems = array_values(array_unique(array_filter(array_map(
+                'trim',
+                explode(',', substr($argument, strlen('syncitems=')))
+            ))));
+        }
+    }
     if (in_array('-h', $argv)) {
         // show help and exit
-        echo "rc.filter_synchronize [debug] [restart_services] [pre_check_master]\n";
+        echo "rc.filter_synchronize [debug] [restart_services] [pre_check_master] [syncitems=item1,item2]\n";
         echo "debug - enable debug output\n";
         echo "restart_services - restart remote configured services\n";
         echo "pre_check_master - exit when carp is not in master mode\n";
+        echo "syncitems - synchronize only listed items enabled in High Availability settings\n";
         exit;
     }
 
@@ -304,17 +331,37 @@ if (!empty($config['hasync'])) {
         }
     }
 
+    $available_syncitems = plugins_xmlrpc_sync();
+    $enabled_syncitems = array_values(array_filter(explode(',', $hasync['syncitems'] ?? '')));
+    if ($requested_syncitems !== null) {
+        if (count($requested_syncitems) === 0) {
+            throw new RuntimeException('selective HA synchronization requires at least one sync item');
+        }
+        foreach ($requested_syncitems as $syncitem) {
+            if (!isset($available_syncitems[$syncitem])) {
+                throw new RuntimeException(sprintf('unknown HA synchronization item %s', $syncitem));
+            }
+            if (!in_array($syncitem, $enabled_syncitems, true)) {
+                throw new RuntimeException(sprintf('HA synchronization item %s is not enabled in High Availability settings', $syncitem));
+            }
+        }
+        $syncitems = $requested_syncitems;
+    } else {
+        $syncitems = $enabled_syncitems;
+    }
+
     $sections = [];
-    $syncitems = array_filter(explode(',', $hasync['syncitems'] ?? ''));
-    foreach (plugins_xmlrpc_sync() as $cnf_key => $cnf) {
-        if (in_array($cnf_key, $syncitems)) {
+    $selected_syncitems = [];
+    foreach ($available_syncitems as $cnf_key => $cnf) {
+        if (in_array($cnf_key, $syncitems, true)) {
+            $selected_syncitems[$cnf_key] = $cnf;
             foreach (array_filter(explode(',', $cnf['section'] ?? '')) as $section) {
                 $sections[] = $section;
             }
         }
     }
 
-    if (count($sections) <= 0) {
+    if (count($selected_syncitems) <= 0) {
         log_msg("Nothing has been configured to be synched. Skipping....");
         exit;
     }
@@ -324,36 +371,64 @@ if (!empty($config['hasync'])) {
         exit;
     }
 
-    carp_sync_xml($synchronizeto, $username, $hasync['password'], $sections, $enable_debug);
+    foreach ($selected_syncitems as $sync_item) {
+        ha_sync_callback($sync_item, 'sync_validate');
+    }
+    foreach ($selected_syncitems as $sync_item) {
+        ha_sync_callback($sync_item, 'sync_prepare');
+    }
+
     $client = new SimpleXMLRPC_Client($synchronizeto, 240);
     $client->debug = $enable_debug;
     $client->setCredentials($username, $hasync['password']);
-    if ($client->query("opnsense.filter_configure")) {
-        $response = $client->getResponse();
-    } else {
-        // propagate error to log
-        log_msg("An error occurred while attempting XMLRPC sync with username {$username} and {$url} " . $client->error, LOG_ERR);
-        // print communication details on failure
-        echo $client->getDetails();
-        return false;
+    if (count($sections) > 0) {
+        carp_sync_xml($synchronizeto, $username, $hasync['password'], array_values(array_unique($sections)), $enable_debug);
+        if ($client->query("opnsense.filter_configure")) {
+            $response = $client->getResponse();
+        } else {
+            // propagate error to log
+            log_msg("An error occurred while attempting XMLRPC sync with username {$username} and {$url} " . $client->error, LOG_ERR);
+            // print communication details on failure
+            echo $client->getDetails();
+            return false;
+        }
+
+        if (!is_array($response) && trim($response) == "Authentication failed") {
+            log_msg("An authentication failure occurred while trying to access {$url}.", LOG_ERR);
+            exit;
+        }
     }
 
-    if (!is_array($response) && trim($response) == "Authentication failed") {
-        log_msg("An authentication failure occurred while trying to access {$url}.", LOG_ERR);
-        exit;
+    foreach ($selected_syncitems as $sync_item) {
+        ha_sync_callback($sync_item, 'sync_finalize');
     }
 
     if ($restart_services) {
-        $client->query('opnsense.configd_reload_all_templates', []);
-        if ($client->query('opnsense.list_services', [])) {
-            foreach ($client->getResponse() as $service) {
-                $client->query('opnsense.restart_service', [
-                    "service" => $service['name'],
-                    "id" => isset($service['id']) ? $service['name'] : ""
-                ]);
+        $services_to_restart = null;
+        if ($requested_syncitems !== null) {
+            $services_to_restart = [];
+            foreach ($selected_syncitems as $sync_item) {
+                $services_to_restart = array_merge($services_to_restart, $sync_item['services'] ?? []);
+            }
+            $services_to_restart = array_values(array_unique($services_to_restart));
+        }
+        if ($services_to_restart === null || count($services_to_restart) > 0) {
+            $client->query('opnsense.configd_reload_all_templates', []);
+            if ($client->query('opnsense.list_services', [])) {
+                foreach ($client->getResponse() as $service) {
+                    if ($services_to_restart === null || in_array($service['name'], $services_to_restart, true)) {
+                        $client->query('opnsense.restart_service', [
+                            "service" => $service['name'],
+                            "id" => isset($service['id']) ? $service['name'] : ""
+                        ]);
+                    }
+                }
             }
         }
     }
 
     log_msg("Filter sync successfully completed with {$synchronizeto}.");
+    if ($requested_syncitems !== null) {
+        echo "ok\n";
+    }
 }

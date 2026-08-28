@@ -45,6 +45,18 @@
                                 let service_id = row.id ?? '';
                                 let service_name = row.name ?? '';
                                 let widget = [];
+                                if (row.sync_item) {
+                                    if (row.status) {
+                                        widget.push('<span class="btn btn-xs btn-success"><i class="fa fa-play fa-fw"></i></span>');
+                                        widget.push('&nbsp;');
+                                    }
+                                    widget.push(
+                                        '<span data-service_action="sync" data-sync_item="'+row.sync_item+'" class="btn btn-xs btn-default xmlrpc_srv_status_act">'+
+                                            '<i class="fa fa-repeat fa-fw"></i>' +
+                                        '</span>'
+                                    );
+                                    return widget.join('');
+                                }
                                 if (row.status) {
                                     widget.push(
                                         '<span class="btn btn-xs btn-success"><i class="fa fa-play fa-fw"></i></span>'
@@ -89,6 +101,9 @@
                             case 'restart':
                                 $(this).tooltip({title: "{{ lang._('Synchronize and Restart') | safe}}", container: "body", trigger: "hover"});
                                 break;
+                            case 'sync':
+                                $(this).tooltip({title: "{{ lang._('Synchronize') | safe}}", container: "body", trigger: "hover"});
+                                break;
                             case 'stop':
                                 $(this).tooltip({title: "{{ lang._('Stop') | safe}}", container: "body", trigger: "hover"});
                                 break;
@@ -100,7 +115,12 @@
                             }
                             $(this).find('i').removeClass('fa-play fa-stop fa-repeat').addClass('fa-spinner fa-pulse');
                             $(this).parent().find('span').addClass('locked');
-                            ajaxCall('/api/core/hasync_status/' + $(this).data('service_action') + '/' + $(this).data('service_name') + '/' + $(this).data('service_id'), {}, function(data){
+                            let action = $(this).data('service_action');
+                            let endpoint = action === 'sync'
+                                ? '/api/core/hasync_status/sync'
+                                : '/api/core/hasync_status/' + action + '/' + $(this).data('service_name') + '/' + $(this).data('service_id');
+                            let payload = action === 'sync' ? {items: [$(this).data('sync_item')]} : {};
+                            ajaxCall(endpoint, payload, function(data){
                                 $('#grid_services').bootgrid('reload');
                             });
                         });
