@@ -38,13 +38,123 @@ class AssignmentController extends ApiMutableModelControllerBase
     protected static $internalModelName = 'interface';
     protected static $internalModelClass = 'OPNsense\Interfaces\NetworkInterface';
 
+    private function hasPolicyManager(): bool
+    {
+        return class_exists('\\OPNsense\\ApiExtensions\\PolicyAssignmentManager');
+    }
+
+    private function policyPayload(): ?string
+    {
+        if (!$this->hasPolicyManager() || !$this->request->isPost() || !$this->request->hasPost('interface')) {
+            return null;
+        }
+        $payload = $this->request->getPost('interface');
+        if (!is_array($payload) || !array_key_exists('ha_policy', $payload)) {
+            return null;
+        }
+        return trim((string)$payload['ha_policy']);
+    }
+
+    private function validatePolicyPayload(): ?array
+    {
+        $policy = $this->policyPayload();
+        if ($policy === null) {
+            return null;
+        }
+        try {
+            \OPNsense\ApiExtensions\PolicyAssignmentManager::validatePolicy($policy);
+        } catch (\Throwable $error) {
+            return [
+                'result' => 'failed',
+                'validations' => [
+                    'interface.ha_policy' => $error->getMessage()
+                ]
+            ];
+        }
+        return null;
+    }
+
+    private function policyState(string $identifier): array
+    {
+        if (!$this->hasPolicyManager() || $identifier === '') {
+            return [
+                'policy_id' => '',
+                'policy_description' => '',
+                'synchronize' => false,
+                'owner' => 'unassigned',
+                'ha_service_enabled' => false,
+            ];
+        }
+        return \OPNsense\ApiExtensions\PolicyAssignmentManager::interfaceState($identifier);
+    }
+
+    private function policyOptions(string $selected): array
+    {
+        $options = [];
+        if (!$this->hasPolicyManager()) {
+            return $options;
+        }
+        foreach (\OPNsense\ApiExtensions\PolicyAssignmentManager::policies() as $policy) {
+            $label = $policy['id'];
+            if (!empty($policy['description'])) {
+                $label .= ' — ' . $policy['description'];
+            }
+            $options[$policy['id']] = [
+                'value' => $label,
+                'selected' => $policy['id'] === $selected ? 1 : 0,
+            ];
+        }
+        return $options;
+    }
+
+    private function readonlyReplica(string $identifier): ?array
+    {
+        if (!$this->hasPolicyManager() || $identifier === '') {
+            return null;
+        }
+        $state = $this->policyState($identifier);
+        if ($state['owner'] !== 'ha_peer') {
+            return null;
+        }
+        return [
+            'result' => 'failed',
+            'validations' => [
+                'interface.ha_policy' => gettext('This interface is an HA peer replica and is read-only on this node.')
+            ]
+        ];
+    }
+
+    private function configuredInterfaceNames(): array
+    {
+        $config = Config::getInstance()->toArray();
+        return isset($config['interfaces']) && is_array($config['interfaces']) ? array_keys($config['interfaces']) : [];
+    }
+
     public function searchItemAction()
     {
-        return $this->searchBase("interface");
+        $result = $this->searchBase("interface");
+        if (!$this->hasPolicyManager() || !isset($result['rows']) || !is_array($result['rows'])) {
+            return $result;
+        }
+        foreach ($result['rows'] as &$row) {
+            $identifier = trim((string)($row['identifier'] ?? ''));
+            $state = $this->policyState($identifier);
+            $row['ha_policy'] = $state['policy_id'];
+            $row['ha_owner'] = $state['owner'];
+            $row['ha_synchronize'] = $state['synchronize'] ? '1' : '0';
+        }
+        unset($row);
+        return $result;
     }
 
     public function setItemAction($ifname)
     {
+        if (($readonly = $this->readonlyReplica((string)$ifname)) !== null) {
+            return $readonly;
+        }
+        if (($validation = $this->validatePolicyPayload()) !== null) {
+            return $validation;
+        }
         if ($this->request->isPost() && $this->request->hasPost('interface')) {
             $payload = $this->request->getPost('interface');
             if (is_array($payload) && !empty($payload['identifier']) && $payload['identifier'] !== $ifname) {
@@ -56,23 +166,76 @@ class AssignmentController extends ApiMutableModelControllerBase
                 ];
             }
         }
-        return $this->setBase("interface", "interface", $ifname, ['identifier' => $ifname]);
+        $policy = $this->policyPayload();
+        $result = $this->setBase("interface", "interface", $ifname, ['identifier' => $ifname]);
+        if (($result['result'] ?? '') === 'saved' && $policy !== null && $this->hasPolicyManager()) {
+            try {
+                \OPNsense\ApiExtensions\PolicyAssignmentManager::setInterface((string)$ifname, $policy);
+            } catch (\Throwable $error) {
+                return ['result' => 'failed', 'validations' => ['interface.ha_policy' => $error->getMessage()]];
+            }
+        }
+        return $result;
     }
 
     public function addItemAction()
     {
-        return $this->addBase("interface", "interface");
+        if (($validation = $this->validatePolicyPayload()) !== null) {
+            return $validation;
+        }
+        $policy = $this->policyPayload();
+        $before = $policy !== null ? $this->configuredInterfaceNames() : [];
+        $payload = $this->request->hasPost('interface') ? $this->request->getPost('interface') : [];
+        $requestedIdentifier = is_array($payload) ? trim((string)($payload['identifier'] ?? '')) : '';
+        $result = $this->addBase("interface", "interface");
+        if (($result['result'] ?? '') === 'saved' && $policy !== null && $this->hasPolicyManager()) {
+            $identifier = $requestedIdentifier;
+            if ($identifier === '') {
+                $created = array_values(array_diff($this->configuredInterfaceNames(), $before));
+                if (count($created) === 1) {
+                    $identifier = $created[0];
+                }
+            }
+            if ($identifier === '') {
+                return [
+                    'result' => 'failed',
+                    'validations' => [
+                        'interface.ha_policy' => gettext('The new interface was saved, but its final identifier could not be resolved for the HA policy assignment.')
+                    ]
+                ];
+            }
+            try {
+                \OPNsense\ApiExtensions\PolicyAssignmentManager::setInterface($identifier, $policy);
+            } catch (\Throwable $error) {
+                return ['result' => 'failed', 'validations' => ['interface.ha_policy' => $error->getMessage()]];
+            }
+        }
+        return $result;
     }
 
     public function getItemAction($ifname = null)
     {
-        return $this->getBase("interface", "interface", $ifname);
+        $result = $this->getBase("interface", "interface", $ifname);
+        if (!isset($result['interface']) || !is_array($result['interface'])) {
+            return $result;
+        }
+        $identifier = $ifname === null ? '' : trim((string)$ifname);
+        $state = $this->policyState($identifier);
+        $result['interface']['ha_policy'] = $this->policyOptions($state['policy_id']);
+        $result['interface']['ha_owner'] = $state['owner'];
+        $result['interface']['ha_synchronize'] = $state['synchronize'] ? '1' : '0';
+        return $result;
     }
 
     public function delItemAction($ifnames)
     {
         if (!$this->request->isPost()) {
             return ['status' => 'failed'];
+        }
+        foreach (explode(',', (string)$ifnames) as $ifname) {
+            if (($readonly = $this->readonlyReplica(trim($ifname))) !== null) {
+                return $readonly;
+            }
         }
         Config::getInstance()->lock();
         $paths = [
@@ -158,6 +321,7 @@ class AssignmentController extends ApiMutableModelControllerBase
              **/
             if (trim($backend->configdRun("interface apply")) == 'OK') {
                 Config::getInstance()->lock();
+                $deletedInterfaces = [];
                 foreach ($this->getModel()->get_if_todo() as $key => $props) {
                     if (!isset(Config::getInstance()->object()->interfaces->$key)) {
                         continue;
@@ -165,12 +329,18 @@ class AssignmentController extends ApiMutableModelControllerBase
                     if ($props['pending_action'] == 'delete') {
                         $this->cleanRules($key); /* remove associated rules */
                         unset(Config::getInstance()->object()->interfaces->$key);
+                        $deletedInterfaces[] = $key;
                     } elseif ($props['pending_action'] == 'relink') {
                         Config::getInstance()->object()->interfaces->$key->if = $props['pending_if'];
                     }
                 }
                 Config::getInstance()->save();
                 $this->getModel()->flush_todo();
+                if ($this->hasPolicyManager()) {
+                    foreach ($deletedInterfaces as $identifier) {
+                        \OPNsense\ApiExtensions\PolicyAssignmentManager::removeInterface($identifier);
+                    }
+                }
                 /* exec filter reload after doing accounting */
                 $backend->configdRun('filter reload skip_alias', true);
                 return ["status" => "ok"];
