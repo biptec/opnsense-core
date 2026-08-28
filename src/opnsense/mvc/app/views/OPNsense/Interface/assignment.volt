@@ -26,6 +26,22 @@
 
 <script>
     $( document ).ready(function() {
+        function refreshInterfaceHAStatus() {
+            ajaxGet('/api/api_extensions/interface_policy/overview', {}, function(data) {
+                const status = $('#interface-ha-policy-status');
+                if (!data || data.status !== 'ok') {
+                    status.removeClass('label-success label-default').addClass('label-danger').text('{{ lang._("Unavailable") }}');
+                    return;
+                }
+                status.removeClass('label-danger label-success label-default')
+                    .addClass(data.ha_service_enabled ? 'label-success' : 'label-default')
+                    .text(data.ha_service_enabled ? '{{ lang._("Enabled") }}' : '{{ lang._("Disabled") }}');
+            });
+        }
+
+        refreshInterfaceHAStatus();
+        $(document).on('settings-changed', refreshInterfaceHAStatus);
+
         $("#{{formGridAssignment['table_id']}}").UIBootgrid(
             {   search:'/api/interfaces/assignment/search_item/',
                 get:'/api/interfaces/assignment/get_item/',
@@ -52,6 +68,10 @@
 
     });
 </script>
+<div class="interface-ha-policy-statusbar" style="display:flex; align-items:center; gap:8px; margin-bottom:10px; min-height:24px;">
+    <strong>{{ lang._('HA synchronization') }}</strong>
+    <span id="interface-ha-policy-status" class="label label-default">{{ lang._('Unknown') }}</span>
+</div>
 <div class="tab-content content-box">
     {{ partial('layout_partials/base_bootgrid_table', formGridAssignment)}}
 </div>
