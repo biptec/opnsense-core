@@ -29,6 +29,16 @@
 
 require_once 'util.inc';
 require_once 'config.inc';
+require_once 'interfaces.inc';
+
+/*
+ * rc.bootup can configure pfsync before its VLAN transport is fully ready.
+ * Retry once from the normal start hook, after interface initialization, so a
+ * failed early attempt cannot leave pfsync bulk sync and CARP demotion stuck.
+ */
+if (!empty($config['hasync']['pfsyncinterface'])) {
+    interfaces_pfsync_configure();
+}
 
 if (empty($config['hasync']) || empty($config['hasync']['disablepreempt'])) {
     set_single_sysctl('net.inet.carp.preempt', '1');

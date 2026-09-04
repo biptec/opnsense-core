@@ -133,7 +133,7 @@ class UIBootgrid {
 
         // wrapper-specific options
         this.options = {
-            disableScroll: false,
+            disableScroll: true,
             sorting: true,
             rowCount: [50, 100, 200, 500, 1000, true],
             remoteGridView: false, // parse gridview from <thead> or via ajax?
@@ -452,8 +452,8 @@ class UIBootgrid {
             this.compatOptions['renderVertical'] = 'virtual';
         }
 
-        if (bootGridOptions?.disableScroll ?? false) {
-            this.options.disableScroll = true;
+        this.options.disableScroll = bootGridOptions?.disableScroll ?? this.options.disableScroll;
+        if (this.options.disableScroll) {
             this.compatOptions['height'] = false;
         }
 
@@ -1443,7 +1443,7 @@ class UIBootgrid {
                 const isEmptyLabel = value == null || String(value).trim() === '';
                 return isEmptyLabel ? true : this.rememberedGroupKeys.has(group.getKey());
             },
-            height: 120, /* represents the "no results found" view */
+            height: this.options.disableScroll ? false : 120, /* represents the "no results found" view */
             resizable: "header",
             placeholder: this.placeholder[0],
             layout: 'fitColumns',
