@@ -33,11 +33,15 @@ require_once 'interfaces.inc';
 
 /*
  * rc.bootup can configure pfsync before its VLAN transport is fully ready.
- * Retry once from the normal start hook, after interface initialization, so a
- * failed early attempt cannot leave pfsync bulk sync and CARP demotion stuck.
+ * Retry once from the normal start hook only when the initial bulk sync did
+ * not complete.  Reconfiguring an already-synced pfsync0 starts a new bulk
+ * transfer and can itself leave CARP demoted if that redundant transfer stalls.
  */
 if (!empty($config['hasync']['pfsyncinterface'])) {
-    interfaces_pfsync_configure();
+    $pfsync_details = legacy_interface_details('pfsync0');
+    if (empty($pfsync_details['syncok'])) {
+        interfaces_pfsync_configure();
+    }
 }
 
 if (empty($config['hasync']) || empty($config['hasync']['disablepreempt'])) {
