@@ -344,7 +344,9 @@ function core_xmlrpc_sync()
         'help' => gettext('Synchronize the Static Route configuration and Gateways to the other HA host.'),
         'section' => 'staticroutes,gateways,OPNsense.Gateways',
         'id' => 'staticroutes',
-        'services' => ['routing', 'dpinger'],
+        // restore_config_section_xmlrpc() applies the routing diff and scoped
+        // gateway monitors directly. Restarting these services afterwards would
+        // reconfigure every interface, including unrelated WAN gateways.
     ];
 
     $result[] = [

@@ -383,7 +383,12 @@ if (!empty($config['hasync'])) {
     $client->setCredentials($username, $hasync['password']);
     if (count($sections) > 0) {
         carp_sync_xml($synchronizeto, $username, $hasync['password'], array_values(array_unique($sections)), $enable_debug);
-        if ($client->query("opnsense.filter_configure")) {
+        if ($requested_syncitems !== null) {
+            $configured = $client->query("opnsense.filter_configure", $syncitems);
+        } else {
+            $configured = $client->query("opnsense.filter_configure");
+        }
+        if ($configured) {
             $response = $client->getResponse();
         } else {
             // propagate error to log

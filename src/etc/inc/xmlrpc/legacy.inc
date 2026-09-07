@@ -130,20 +130,166 @@ function firmware_version_xmlrpc()
     ];
 }
 
+function ha_xmlrpc_config_rows($value)
+{
+    if (!is_array($value)) {
+        return [];
+    }
+    return array_is_list($value) ? array_values($value) : [$value];
+}
+
+function ha_xmlrpc_canonicalize($value)
+{
+    if (!is_array($value)) {
+        return $value;
+    }
+    if (array_is_list($value)) {
+        return array_map('ha_xmlrpc_canonicalize', $value);
+    }
+    ksort($value);
+    foreach ($value as $key => $entry) {
+        $value[$key] = ha_xmlrpc_canonicalize($entry);
+    }
+    return $value;
+}
+
+function ha_xmlrpc_gateway_map(array $source)
+{
+    $result = [];
+    foreach ([
+        $source['gateways']['gateway_item'] ?? [],
+        $source['OPNsense']['Gateways']['gateway_item'] ?? [],
+    ] as $container) {
+        foreach (ha_xmlrpc_config_rows($container) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $name = trim((string)($row['name'] ?? ''));
+            if ($name !== '') {
+                $result[$name] = $row;
+            }
+        }
+    }
+    return $result;
+}
+
+function ha_xmlrpc_route_map(array $source)
+{
+    $result = [];
+    foreach (ha_xmlrpc_config_rows($source['staticroutes']['route'] ?? []) as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $uuid = trim((string)($row['@attributes']['uuid'] ?? ''));
+        if ($uuid !== '') {
+            $key = 'uuid:' . $uuid;
+        } else {
+            $key = 'row:' . hash('sha256', json_encode(ha_xmlrpc_canonicalize($row)));
+        }
+        $result[$key] = $row;
+    }
+    return $result;
+}
+
+function ha_xmlrpc_gateway_interface(array $gateways, $name)
+{
+    $name = trim((string)$name);
+    if ($name === '' || !isset($gateways[$name])) {
+        return '';
+    }
+    return trim((string)($gateways[$name]['interface'] ?? ''));
+}
+
+function ha_xmlrpc_delete_static_route(array $route)
+{
+    if (!empty($route['disabled'])) {
+        return;
+    }
+    $network = trim((string)($route['network'] ?? ''));
+    if (is_subnetv4($network)) {
+        $family = 'inet';
+    } elseif (is_subnetv6($network)) {
+        $family = 'inet6';
+    } else {
+        return;
+    }
+    mwexecfm('/sbin/route delete -%s %s', [$family, $network]);
+}
+
+function ha_xmlrpc_apply_routing_diff(array $old_config, array $new_config)
+{
+    $old_gateways = ha_xmlrpc_gateway_map($old_config);
+    $new_gateways = ha_xmlrpc_gateway_map($new_config);
+    $old_routes = ha_xmlrpc_route_map($old_config);
+    $new_routes = ha_xmlrpc_route_map($new_config);
+    $interfaces = [];
+
+    foreach (array_unique(array_merge(array_keys($old_gateways), array_keys($new_gateways))) as $name) {
+        $old = $old_gateways[$name] ?? null;
+        $new = $new_gateways[$name] ?? null;
+        if (ha_xmlrpc_canonicalize($old) === ha_xmlrpc_canonicalize($new)) {
+            continue;
+        }
+        foreach ([$old, $new] as $gateway) {
+            if (is_array($gateway)) {
+                $interface = trim((string)($gateway['interface'] ?? ''));
+                if ($interface !== '') {
+                    $interfaces[$interface] = true;
+                }
+            }
+        }
+    }
+
+    foreach (array_unique(array_merge(array_keys($old_routes), array_keys($new_routes))) as $key) {
+        $old = $old_routes[$key] ?? null;
+        $new = $new_routes[$key] ?? null;
+        if (ha_xmlrpc_canonicalize($old) === ha_xmlrpc_canonicalize($new)) {
+            continue;
+        }
+        if (is_array($old)) {
+            ha_xmlrpc_delete_static_route($old);
+            $interface = ha_xmlrpc_gateway_interface($old_gateways, $old['gateway'] ?? '');
+            if ($interface !== '') {
+                $interfaces[$interface] = true;
+            }
+        }
+        if (is_array($new)) {
+            $interface = ha_xmlrpc_gateway_interface($new_gateways, $new['gateway'] ?? '');
+            if ($interface !== '') {
+                $interfaces[$interface] = true;
+            }
+        }
+    }
+
+    if (!empty($interfaces)) {
+        system_routing_configure(false, array_keys($interfaces));
+    }
+}
+
 /**
  * filter reconfigure
  * @return mixed
  */
-function filter_configure_xmlrpc()
+function filter_configure_xmlrpc($syncitems = null)
 {
     require_once("filter.inc");
     require_once("system.inc");
     require_once("util.inc");
     require_once("interfaces.inc");
 
-    system_routing_configure();
-    system_resolver_configure();
-    filter_configure();
+    if ($syncitems === null) {
+        system_routing_configure();
+        system_resolver_configure();
+        filter_configure();
+        return true;
+    }
+    if (!is_array($syncitems)) {
+        throw new InvalidArgumentException('selective XMLRPC filter configure expects a sync item list');
+    }
+    $syncitems = array_values(array_unique(array_filter(array_map('trim', $syncitems))));
+    if (array_intersect($syncitems, ['virtualip', 'rules', 'staticroutes', 'aliases'])) {
+        filter_configure();
+    }
 
     return true;
 }
@@ -161,6 +307,8 @@ function restore_config_section_xmlrpc($new_config)
 
     require_once("interfaces.inc");
     require_once("filter.inc");
+    require_once("system.inc");
+    require_once("util.inc");
 
     // save old config
     $old_config = $config;
@@ -215,6 +363,9 @@ function restore_config_section_xmlrpc($new_config)
 
         if (isset($config['virtualip']['vip'])) {
             foreach ($config['virtualip']['vip'] as $vip) {
+                if (!empty($vip['nosync'])) {
+                    continue; // node-local VIPs are preserved locally and must never be reconfigured by peer sync
+                }
                 $vipKey = get_unique_vip_key($vip);
                 if (!empty($vip['vhid']) && isset($oldvips[$vipKey])) {
                     $is_changed = false;
@@ -259,6 +410,14 @@ function restore_config_section_xmlrpc($new_config)
         if ($proxyarp) {
             interface_proxyarp_configure();
         }
+    }
+
+    if (
+        array_key_exists('staticroutes', $new_config) ||
+        array_key_exists('gateways', $new_config) ||
+        isset($new_config['OPNsense']['Gateways'])
+    ) {
+        ha_xmlrpc_apply_routing_diff($old_config, $config);
     }
 
     if (isset($old_config['ipsec']['enable']) !== isset($config['ipsec']['enable'])) {

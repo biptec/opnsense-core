@@ -710,7 +710,10 @@ function system_routing_configure($verbose = false, $interface_map = null, $moni
             continue;
         }
 
-        if (isset($config['system']['gw_switch_default']) || empty($interface_map) || in_array($gateway['interface'], $interface_map)) {
+        // An explicit interface map is a hard scope boundary.  Dynamic default
+        // gateway switching may select a different global gateway, but it must not
+        // let a targeted internal route update touch an unrelated WAN default.
+        if (empty($interface_map) || in_array($gateway['interface'], $interface_map)) {
             if (empty($ifdetails[$gateway['if']][$type][0])) {
                 log_msg("ROUTING: refusing to set {$ipproto} gateway on addressless {$gateway['interface']}({$gateway['if']})", LOG_ERR);
                 continue;
