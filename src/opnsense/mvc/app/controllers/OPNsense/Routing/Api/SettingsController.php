@@ -40,12 +40,45 @@ class SettingsController extends ApiMutableModelControllerBase
     protected static $internalModelClass = '\OPNsense\Routing\Gateways';
     protected static $internalModelName = 'gateways';
 
+    private function withRoutingReconfigure(array $result, array $interfaces): array
+    {
+        $normalized = [];
+        foreach ($interfaces as $interface) {
+            $interface = trim((string)$interface);
+            if ($interface !== '') {
+                $normalized[$interface] = true;
+            }
+        }
+        if (!empty($normalized)) {
+            $result['reconfigure'] = ['interfaces' => array_keys($normalized)];
+        }
+        return $result;
+    }
+
     public function reconfigureAction()
     {
         $result = ["status" => "failed"];
         if ($this->request->isPost()) {
-            (new Backend())->configdRun('interface routes configure');
-            $result = ["status" => "ok"];
+            $command = 'interface routes configure';
+            if ($this->request->hasPost('interfaces')) {
+                $requested = $this->request->getPost('interfaces');
+                if (!is_array($requested) || empty($requested)) {
+                    return $result;
+                }
+                $configured = array_fill_keys(array_keys(Config::getInstance()->toArray()['interfaces'] ?? []), true);
+                $interfaces = [];
+                foreach ($requested as $interface) {
+                    $interface = trim((string)$interface);
+                    if ($interface === '' || !isset($configured[$interface])) {
+                        return $result;
+                    }
+                    $interfaces[$interface] = true;
+                }
+                $command = 'interface routes configure_selected ' . implode(',', array_keys($interfaces));
+            }
+            if (trim((new Backend())->configdRun($command)) === 'OK') {
+                $result = ["status" => "ok"];
+            }
         }
 
         return $result;
@@ -183,14 +216,30 @@ class SettingsController extends ApiMutableModelControllerBase
             $uuid = $mdl->gateway_item->generateUUID();
         }
 
+        $previous = $this->getModel()->getNodeByReference('gateway_item.' . $uuid);
+        $previousInterface = $previous !== null ? (string)$previous->interface : '';
         $result = $this->setBase('gateway_item', 'gateway_item', $uuid);
+        if (($result['result'] ?? '') === 'saved') {
+            $current = $this->getModel()->getNodeByReference('gateway_item.' . $uuid);
+            $result = $this->withRoutingReconfigure($result, [
+                $previousInterface,
+                $current !== null ? (string)$current->interface : '',
+            ]);
+        }
 
         return $result;
     }
 
     public function addGatewayAction()
     {
-        return $this->addBase("gateway_item", "gateway_item");
+        $result = $this->addBase("gateway_item", "gateway_item");
+        if (($result['result'] ?? '') === 'saved' && !empty($result['uuid'])) {
+            $gateway = $this->getModel()->getNodeByReference('gateway_item.' . $result['uuid']);
+            if ($gateway !== null) {
+                $result = $this->withRoutingReconfigure($result, [(string)$gateway->interface]);
+            }
+        }
+        return $result;
     }
 
     /* XXX consider removing $cfg use -- everything should have a model now */
@@ -243,7 +292,11 @@ class SettingsController extends ApiMutableModelControllerBase
                     ));
                 }
 
+                $interface = (string)$gateway->interface;
                 $result = $this->delBase('gateway_item', $uuid);
+                if (($result['result'] ?? '') === 'deleted') {
+                    $result = $this->withRoutingReconfigure($result, [$interface]);
+                }
             }
         }
 
@@ -282,6 +335,7 @@ class SettingsController extends ApiMutableModelControllerBase
                     // if item has toggled, serialize to config and save
                     if ($result['changed']) {
                         $this->save();
+                        $result = $this->withRoutingReconfigure($result, [(string)$node->interface]);
                     }
                 }
             }

@@ -31,7 +31,9 @@ namespace OPNsense\Routes\Api;
 
 use OPNsense\Base\ApiMutableModelControllerBase;
 use OPNsense\Core\Backend;
+use OPNsense\Core\Config;
 use OPNsense\Routes\Route;
+use OPNsense\Routing\Gateways;
 
 /**
  * @package OPNsense\Routes
@@ -40,6 +42,22 @@ class RoutesController extends ApiMutableModelControllerBase
 {
     protected static $internalModelName = 'route';
     protected static $internalModelClass = '\OPNsense\Routes\Route';
+
+    private function withRoutingReconfigure(array $result, array $gatewayNames): array
+    {
+        $interfaces = [];
+        $gateways = new Gateways();
+        foreach ($gatewayNames as $gatewayName) {
+            $interface = $gateways->getInterfaceName(trim((string)$gatewayName));
+            if ($interface !== null && $interface !== '') {
+                $interfaces[$interface] = true;
+            }
+        }
+        if (!empty($interfaces)) {
+            $result['reconfigure'] = ['interfaces' => array_keys($interfaces)];
+        }
+        return $result;
+    }
 
     /**
      * search routes
@@ -61,6 +79,8 @@ class RoutesController extends ApiMutableModelControllerBase
     public function setrouteAction($uuid)
     {
         $node = $this->getBase("route", "route", $uuid);
+        $modelNode = (new Route())->getNodeByReference('route.' . $uuid);
+        $previousGateway = $modelNode !== null ? (string)$modelNode->gateway : '';
         // delete previous route when changed (one shot, apply should only delete the last known situation)
         if (
             !empty($node['route']['network']) && $_POST['route']['network'] != $node['route']['network']
@@ -68,7 +88,15 @@ class RoutesController extends ApiMutableModelControllerBase
         ) {
             file_put_contents("/tmp/delete_route_{$uuid}.todo", $node['route']['network']);
         }
-        return $this->setBase("route", "route", $uuid);
+        $result = $this->setBase("route", "route", $uuid);
+        if (($result['result'] ?? '') === 'saved') {
+            $current = (new Route())->getNodeByReference('route.' . $uuid);
+            $result = $this->withRoutingReconfigure($result, [
+                $previousGateway,
+                $current !== null ? (string)$current->gateway : '',
+            ]);
+        }
+        return $result;
     }
 
     /**
@@ -80,7 +108,14 @@ class RoutesController extends ApiMutableModelControllerBase
      */
     public function addrouteAction()
     {
-        return $this->addBase("route", "route");
+        $result = $this->addBase("route", "route");
+        if (($result['result'] ?? '') === 'saved' && !empty($result['uuid'])) {
+            $route = (new Route())->getNodeByReference('route.' . $result['uuid']);
+            if ($route !== null) {
+                $result = $this->withRoutingReconfigure($result, [(string)$route->gateway]);
+            }
+        }
+        return $result;
     }
 
     /**
@@ -105,10 +140,12 @@ class RoutesController extends ApiMutableModelControllerBase
     public function delrouteAction($uuid)
     {
         $node = (new Route())->getNodeByReference('route.' . $uuid);
+        $gateway = $node !== null ? (string)$node->gateway : '';
         $response = $this->delBase("route", $uuid);
         if (!empty($response['result']) && $response['result'] == 'deleted') {
             // we don't know for sure if this route was already removed, flush to disk to remove on apply
             file_put_contents("/tmp/delete_route_{$uuid}.todo", (string)$node->network);
+            $response = $this->withRoutingReconfigure($response, [$gateway]);
         }
         return $response;
     }
@@ -123,7 +160,13 @@ class RoutesController extends ApiMutableModelControllerBase
      */
     public function togglerouteAction($uuid, $enabled = null)
     {
-        return $this->toggleBase("route", $uuid, $enabled);
+        $node = (new Route())->getNodeByReference('route.' . $uuid);
+        $gateway = $node !== null ? (string)$node->gateway : '';
+        $result = $this->toggleBase("route", $uuid, $enabled);
+        if (!empty($result['changed'])) {
+            $result = $this->withRoutingReconfigure($result, [$gateway]);
+        }
+        return $result;
     }
 
     /**
@@ -135,7 +178,24 @@ class RoutesController extends ApiMutableModelControllerBase
     {
         if ($this->request->isPost()) {
             $backend = new Backend();
-            $bckresult = trim($backend->configdRun('interface routes configure'));
+            $command = 'interface routes configure';
+            if ($this->request->hasPost('interfaces')) {
+                $requested = $this->request->getPost('interfaces');
+                if (!is_array($requested) || empty($requested)) {
+                    return array('status' => 'failed');
+                }
+                $configured = array_fill_keys(array_keys(Config::getInstance()->toArray()['interfaces'] ?? []), true);
+                $interfaces = [];
+                foreach ($requested as $interface) {
+                    $interface = trim((string)$interface);
+                    if ($interface === '' || !isset($configured[$interface])) {
+                        return array('status' => 'failed');
+                    }
+                    $interfaces[$interface] = true;
+                }
+                $command = 'interface routes configure_selected ' . implode(',', array_keys($interfaces));
+            }
+            $bckresult = trim($backend->configdRun($command));
             if ($bckresult == 'OK') {
                 $status = 'ok';
             } else {

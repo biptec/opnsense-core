@@ -39,6 +39,33 @@ class VipSettingsController extends ApiMutableModelControllerBase
     protected static $internalModelName = 'vip';
     protected static $internalModelClass = 'OPNsense\Interfaces\Vip';
 
+    private function withVipReconfigure(array $result, array $interfaces): array
+    {
+        $normalized = [];
+        foreach ($interfaces as $interface) {
+            $interface = trim((string)$interface);
+            if ($interface !== '') {
+                $normalized[$interface] = true;
+            }
+        }
+        if (!empty($normalized)) {
+            $result['reconfigure'] = ['interfaces' => array_keys($normalized)];
+        }
+        return $result;
+    }
+
+    private function queueDeletedVip(string $uuid, string $interface, string $address): void
+    {
+        if (Util::isLinkLocal($address)) {
+            $address .= "@{$interface}";
+        }
+        file_put_contents(
+            "/tmp/delete_vip_{$uuid}.todo",
+            $interface . "\t" . $address . PHP_EOL,
+            FILE_APPEND
+        );
+    }
+
     /**
      * extract network field into subnet + bits for model
      */
@@ -140,20 +167,32 @@ class VipSettingsController extends ApiMutableModelControllerBase
                 ];
             }
         }
+        $previousInterface = $node !== null ? (string)$node->interface : '';
         if ($node != null && ($post_subnet != (string)$node->subnet || $post_interface != (string)$node->interface)) {
-            $addr = (string)$node->subnet;
-            if (Util::isLinkLocal($addr)) {
-                $addr .= "@{$node->interface}";
-            }
-            file_put_contents("/tmp/delete_vip_{$uuid}.todo", $addr . PHP_EOL, FILE_APPEND);
+            $this->queueDeletedVip($uuid, (string)$node->interface, (string)$node->subnet);
         }
 
-        return $this->handleFormValidations($this->setBase('vip', 'vip', $uuid, $this->getVipOverlay()));
+        $response = $this->handleFormValidations($this->setBase('vip', 'vip', $uuid, $this->getVipOverlay()));
+        if (($response['result'] ?? '') === 'saved') {
+            $current = $this->getModel()->getNodeByReference('vip.' . $uuid);
+            $response = $this->withVipReconfigure($response, [
+                $previousInterface,
+                $current !== null ? (string)$current->interface : '',
+            ]);
+        }
+        return $response;
     }
 
     public function addItemAction()
     {
-        return $this->handleFormValidations($this->addBase('vip', 'vip', $this->getVipOverlay()));
+        $response = $this->handleFormValidations($this->addBase('vip', 'vip', $this->getVipOverlay()));
+        if (($response['result'] ?? '') === 'saved' && !empty($response['uuid'])) {
+            $node = $this->getModel()->getNodeByReference('vip.' . $response['uuid']);
+            if ($node !== null) {
+                $response = $this->withVipReconfigure($response, [(string)$node->interface]);
+            }
+        }
+        return $response;
     }
 
     public function getItemAction($uuid = null)
@@ -206,13 +245,13 @@ class VipSettingsController extends ApiMutableModelControllerBase
 
         $response = $this->delBase("vip", $uuids);
         if (($response['result'] ?? '') == 'deleted') {
+            $interfaces = [];
             foreach ($nodes as $uuid => $node) {
-                $addr = (string)$node->subnet;
-                if (Util::isLinkLocal($addr)) {
-                    $addr .= "@{$node->interface}";
-                }
-                file_put_contents("/tmp/delete_vip_{$uuid}.todo", $addr . PHP_EOL, FILE_APPEND);
+                $interface = (string)$node->interface;
+                $interfaces[] = $interface;
+                $this->queueDeletedVip($uuid, $interface, (string)$node->subnet);
             }
+            $response = $this->withVipReconfigure($response, $interfaces);
         }
         return $response;
     }
@@ -221,7 +260,24 @@ class VipSettingsController extends ApiMutableModelControllerBase
     {
         $result = array("status" => "failed");
         if ($this->request->isPost()) {
-            $result['status'] = strtolower(trim((new Backend())->configdRun('interface vip configure')));
+            $command = 'interface vip configure';
+            if ($this->request->hasPost('interfaces')) {
+                $requested = $this->request->getPost('interfaces');
+                if (!is_array($requested) || empty($requested)) {
+                    return $result;
+                }
+                $configured = array_fill_keys(array_keys(Config::getInstance()->toArray()['interfaces'] ?? []), true);
+                $interfaces = [];
+                foreach ($requested as $interface) {
+                    $interface = trim((string)$interface);
+                    if ($interface === '' || !isset($configured[$interface])) {
+                        return $result;
+                    }
+                    $interfaces[$interface] = true;
+                }
+                $command = 'interface vip configure_selected ' . implode(',', array_keys($interfaces));
+            }
+            $result['status'] = strtolower(trim((new Backend())->configdRun($command)));
         }
         return $result;
     }

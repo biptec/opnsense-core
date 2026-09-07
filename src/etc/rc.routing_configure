@@ -35,8 +35,26 @@ require_once 'filter.inc';
 
 exit_on_bootup();
 
-/* when called with an argument we are in gateway switch mode */
-$monitor_hook = !empty($argv[1]);
+/*
+ * With "selected <if1,if2,...>" only the named logical interfaces are
+ * reconfigured.  Any other argument keeps the historical gateway alarm mode.
+ */
+$selected = ($argv[1] ?? '') === 'selected';
+$interface_map = [];
+if ($selected) {
+    foreach (array_filter(explode(',', (string)($argv[2] ?? ''))) as $interface) {
+        $interface = trim($interface);
+        if ($interface !== '' && isset($config['interfaces'][$interface])) {
+            $interface_map[$interface] = true;
+        }
+    }
+    $interface_map = array_keys($interface_map);
+    if (empty($interface_map)) {
+        log_msg('ROUTING: refusing selected configure without valid interfaces', LOG_ERR);
+        exit(1);
+    }
+}
+$monitor_hook = !$selected && !empty($argv[1]);
 $monitor_gws = $argv[2] ?? '';
 
 /* drop deleted routes */
@@ -48,7 +66,7 @@ foreach (glob("/tmp/delete_route_*.todo") as $filename) {
 }
 
 /* routing is not allowed to restart monitors when extended hook is requested */
-system_routing_configure(true, null, !$monitor_hook);
+system_routing_configure(true, $selected ? $interface_map : null, !$monitor_hook);
 
 if ($monitor_hook) {
     pass_safe('/usr/local/etc/rc.syshook monitor %s', $monitor_gws);

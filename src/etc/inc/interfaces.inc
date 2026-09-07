@@ -1425,10 +1425,15 @@ function interface_proxyarp_configure($interface = '')
 {
     $paa = [];
 
-    /* kill any running choparp, on restart "all" */
+    /* kill running choparp either globally or only for the selected interface */
     if (empty($interface)) {
         foreach (glob('/var/run/choparp_*.pid') as $pidfile) {
             killbypid($pidfile);
+        }
+    } else {
+        $vipif = get_real_interface($interface);
+        if (!empty($vipif)) {
+            killbypid("/var/run/choparp_{$vipif}.pid");
         }
     }
 
@@ -1456,9 +1461,6 @@ function interface_proxyarp_configure($interface = '')
         foreach ($paents as $paent) {
             $args[] = "{$paent['subnet']}/{$paent['subnet_bits']}";
             $frmt[] = '%s';
-        }
-        if (!empty($interface)) {
-            killbypid($pid_filename);
         }
         mwexecfb($frmt, $args);
     }

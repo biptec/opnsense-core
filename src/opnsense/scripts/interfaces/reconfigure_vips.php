@@ -32,6 +32,24 @@ require_once("filter.inc");
 require_once("interfaces.inc");
 require_once("util.inc");
 
+$selected = ($argv[1] ?? '') === 'selected';
+$selectedInterfaces = [];
+if ($selected) {
+    $configuredInterfaces = legacy_config_get_interfaces();
+    foreach (array_filter(explode(',', (string)($argv[2] ?? ''))) as $interface) {
+        $interface = trim($interface);
+        if ($interface === '' || !isset($configuredInterfaces[$interface])) {
+            log_msg("VIP: refusing selected configure for unknown interface {$interface}", LOG_ERR);
+            exit(1);
+        }
+        $selectedInterfaces[$interface] = true;
+    }
+    if (empty($selectedInterfaces)) {
+        log_msg('VIP: refusing selected configure without valid interfaces', LOG_ERR);
+        exit(1);
+    }
+}
+
 $addresses = [];
 $proxyarp = false;
 
@@ -69,7 +87,23 @@ foreach (legacy_interfaces_details() as $ifname => $ifcnf) {
 
 // remove deleted vips
 foreach (glob("/tmp/delete_vip_*.todo") as $filename) {
-    foreach (array_unique(explode("\n", trim(file_get_contents($filename)))) as $address) {
+    $remaining = [];
+    foreach (array_unique(explode("\n", trim(file_get_contents($filename)))) as $entry) {
+        if ($entry === '') {
+            continue;
+        }
+        $todoInterface = null;
+        $address = $entry;
+        if (strpos($entry, "\t") !== false) {
+            list($todoInterface, $address) = explode("\t", $entry, 2);
+            $todoInterface = trim($todoInterface);
+        }
+        if ($selected && ($todoInterface === null || !isset($selectedInterfaces[$todoInterface]))) {
+            // Legacy todo entries do not carry interface scope. Leave them for a
+            // later global apply instead of risking an unrelated address delete.
+            $remaining[] = $entry;
+            continue;
+        }
         /* '@' designates an IPv6 link-local scope, but not on network device */
         if (strpos($address, '@') !== false) {
              list($address, $interface) = explode('@', $address);
@@ -83,7 +117,11 @@ foreach (glob("/tmp/delete_vip_*.todo") as $filename) {
             $proxyarp = true;
         }
     }
-    unlink($filename);
+    if (empty($remaining)) {
+        unlink($filename);
+    } else {
+        file_put_contents($filename, implode(PHP_EOL, $remaining) . PHP_EOL);
+    }
 }
 
 $virtualip_vips = config_read_array('virtualip', 'vip', false);
@@ -99,6 +137,9 @@ if (count($virtualip_vips)) {
     }
 
     foreach ($virtualip_vips as $vipent) {
+        if ($selected && !isset($selectedInterfaces[trim((string)($vipent['interface'] ?? ''))])) {
+            continue;
+        }
         if (!empty($vipent['interface']) && !empty($interfaces[$vipent['interface']])) {
             $if = $interfaces[$vipent['interface']];
             $subnet = $vipent['subnet'];
@@ -152,5 +193,11 @@ if (count($virtualip_vips)) {
 }
 
 if ($proxyarp) {
-    interface_proxyarp_configure();
+    if ($selected) {
+        foreach (array_keys($selectedInterfaces) as $interface) {
+            interface_proxyarp_configure($interface);
+        }
+    } else {
+        interface_proxyarp_configure();
+    }
 }
