@@ -358,7 +358,7 @@ function restore_config_section_xmlrpc($new_config)
      * Handle virtual ips
      */
     if (isset($new_config['virtualip']['vip'])) {
-        $proxyarp = false;
+        $proxyarp_interfaces = [];
         $pfsync = false;
 
         if (isset($config['virtualip']['vip'])) {
@@ -367,6 +367,11 @@ function restore_config_section_xmlrpc($new_config)
                     continue; // node-local VIPs are preserved locally and must never be reconfigured by peer sync
                 }
                 $vipKey = get_unique_vip_key($vip);
+                if (empty($vip['vhid']) && isset($vipbackup[$vipKey])) {
+                    // This is a local non-VHID VIP preserved across the merge, not
+                    // part of the synchronized virtualip payload. Leave it alone.
+                    continue;
+                }
                 if (!empty($vip['vhid']) && isset($oldvips[$vipKey])) {
                     $is_changed = false;
                     foreach (['password', 'advskew', 'subnet', 'subnet_bits', 'advbase'] as $chk_key) {
@@ -385,7 +390,9 @@ function restore_config_section_xmlrpc($new_config)
 
                 switch ($vip['mode']) {
                     case "proxyarp":
-                        $proxyarp = true;
+                        if (!empty($vip['interface'])) {
+                            $proxyarp_interfaces[$vip['interface']] = true;
+                        }
                         break;
                     case "ipalias":
                         interface_ipalias_configure($vip);
@@ -400,6 +407,9 @@ function restore_config_section_xmlrpc($new_config)
 
         // remove old (carp/ipalias-with-vhid) virtual ip's
         foreach ($oldvips as $oldvip) {
+            if (($oldvip['mode'] ?? '') === 'proxyarp' && !empty($oldvip['interface'])) {
+                $proxyarp_interfaces[$oldvip['interface']] = true;
+            }
             interface_vip_bring_down($oldvip);
         }
 
@@ -407,8 +417,8 @@ function restore_config_section_xmlrpc($new_config)
             interfaces_pfsync_configure();
         }
 
-        if ($proxyarp) {
-            interface_proxyarp_configure();
+        foreach (array_keys($proxyarp_interfaces) as $interface) {
+            interface_proxyarp_configure($interface);
         }
     }
 

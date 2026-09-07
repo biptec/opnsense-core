@@ -193,5 +193,11 @@ if (count($virtualip_vips)) {
 }
 
 if ($proxyarp) {
-    interface_proxyarp_configure();
+    if ($selected) {
+        foreach (array_keys($selectedInterfaces) as $interface) {
+            interface_proxyarp_configure($interface);
+        }
+    } else {
+        interface_proxyarp_configure();
+    }
 }
