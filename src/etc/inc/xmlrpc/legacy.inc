@@ -1,5 +1,7 @@
 <?php
 
+require_once(__DIR__ . "/../ha_sync_route_guard.inc");
+
 /*
  * Copyright (C) 2015-2025 Deciso B.V.
  * Copyright (C) 2004-2010 Scott Ullrich <sullrich@gmail.com>
@@ -464,6 +466,14 @@ function restore_config_section_xmlrpc($new_config)
 
     // save old config
     $old_config = $config;
+
+    // Native staticroutes is operator-selectable, but the local bootstrap
+    // connected network is never an HA-owned destination. Keep any
+    // preexisting receiver-local route and drop a conflicting sender route.
+    $suppressed = ha_sync_guard_bootstrap_routes($new_config, $config, true);
+    if ($suppressed > 0) {
+        log_msg(sprintf('HA XMLRPC ignored %d receiver bootstrap-overlapping static routes', $suppressed), LOG_WARNING);
+    }
 
     ha_xmlrpc_apply_receiver_carp_skew($new_config, $config);
 

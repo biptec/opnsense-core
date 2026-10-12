@@ -37,6 +37,7 @@ require_once("filter.inc");
 require_once("util.inc");
 require_once("interfaces.inc");
 require_once("XMLRPC_Client.inc");
+require_once(__DIR__ . "/inc/ha_sync_route_guard.inc");
 
 exit_on_bootup();
 
@@ -218,6 +219,13 @@ function carp_sync_xml($url, $username, $password, $sections, $debug)
 
     // remove items which may not be synced
     remove_nosync($transport_data);
+
+    // A route to the sender's own connected bootstrap CIDR must never be
+    // exported as a peer route; it could blackhole receiver management.
+    $suppressed = ha_sync_guard_bootstrap_routes($transport_data, $config);
+    if ($suppressed > 0) {
+        log_msg(sprintf('HA XMLRPC excluded %d bootstrap-overlapping static routes', $suppressed), LOG_WARNING);
+    }
 
     // ***** post processing *****
     // dhcpd, unchanged from legacy code (may need some inspection later)
