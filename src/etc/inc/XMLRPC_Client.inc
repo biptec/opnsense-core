@@ -43,6 +43,20 @@ function xmlrpc_execute($method, $params = [], $debug = false)
     global $config;
     $synchronizeto = null;
     $hasync = $config['hasync'];
+    // The one-shot reverse sync runs on the secondary without a persistent
+    // outbound target. Plugin callbacks use xmlrpc_execute(), so they must
+    // share the validated peer of the enclosing rc.filter_synchronize run.
+    // Never mutate $config or save this process-local override to disk.
+    $runtime_peer = $GLOBALS['opnsense_hasync_runtime_peer'] ?? null;
+    if ($runtime_peer !== null) {
+        $configured_peer = trim((string)($hasync['pfsyncpeerip'] ?? ''));
+        if (!is_string($runtime_peer) || $configured_peer === '' ||
+            filter_var($configured_peer, FILTER_VALIDATE_IP) === false ||
+            $runtime_peer !== $configured_peer) {
+            throw new InvalidArgumentException('one-shot XMLRPC target must equal the configured pfsync peer');
+        }
+        $hasync['synchronizetoip'] = $runtime_peer;
+    }
     if (is_ipaddrv6($hasync['synchronizetoip'])) {
         $hasync['synchronizetoip'] = "[{$hasync['synchronizetoip']}]";
     }

@@ -1,5 +1,7 @@
 <?php
 
+require_once(__DIR__ . "/../ha_sync_route_guard.inc");
+
 /*
  * Copyright (C) 2015-2025 Deciso B.V.
  * Copyright (C) 2004-2010 Scott Ullrich <sullrich@gmail.com>
@@ -78,27 +80,74 @@ function does_vip_exist($vip)
 }
 
 /**
- * merge attributes from source array to destination
- * updates leaves and overwrites sequenced arrays (container types).
- * @param array $cnf_source source data
- * @param array $cnf_dest target
+ * Preserve node-local firewall/NAT rules when applying HA synchronised rules.
+ *
+ * These lists are order-sensitive: copying the primary's list would erase
+ * receiver-local nosync rules, while prepending all local rules would move
+ * their precedence. Fill old synchronized slots from the incoming sequence
+ * and retain each local nosync rule in its previous relative position.
+ * Excess incoming rules append in sender order; removed synced rules vanish.
+ *
+ * The sender's remove_nosync() removes its own local rules. Reject unexpected
+ * nosync records received over XMLRPC, rather than adopting another node's
+ * local rule. No UUID capture/handoff is involved.
+ */
+function ha_xmlrpc_merge_ordered_nosync($source, $local): array
+{
+    $incoming = ha_xmlrpc_config_rows($source);
+    $existing = ha_xmlrpc_config_rows($local);
+    foreach ($incoming as $row) {
+        if (!is_array($row) || !empty($row['nosync'])) {
+            throw new RuntimeException('HA synchronized ordered rules contain an invalid or node-local record');
+        }
+    }
+    foreach ($existing as $row) {
+        if (!is_array($row)) {
+            throw new RuntimeException('local ordered rules contain an invalid record');
+        }
+    }
+
+    $result = [];
+    $next = 0;
+    foreach ($existing as $row) {
+        if (!empty($row['nosync'])) {
+            $result[] = $row;
+        } elseif ($next < count($incoming)) {
+            $result[] = $incoming[$next++];
+        }
+    }
+    for (; $next < count($incoming); ++$next) {
+        $result[] = $incoming[$next];
+    }
+    return $result;
+}
+
+/**
+ * Merge source attributes into destination while preserving node-local items.
+ * Ordered firewall/NAT collections require a position-preserving merge.
  */
 function merge_config_attributes(&$cnf_source, &$cnf_dest, $path = '')
 {
     foreach ($cnf_source as $cnf_key => &$cnf_value) {
         if (is_array($cnf_value)) {
-            $path = empty($path) ? $cnf_key : sprintf('%s.%s', $path, $cnf_key);
+            // Compute the path per child. Mutating $path across siblings
+            // incorrectly changes later paths (filter.rule -> nat.rule).
+            $child_path = $path === '' ? $cnf_key : sprintf('%s.%s', $path, $cnf_key);
+            if (in_array($child_path, ['filter.rule', 'nat.rule', 'nat.outbound.rule'], true)) {
+                $cnf_dest[$cnf_key] = ha_xmlrpc_merge_ordered_nosync(
+                    $cnf_value, $cnf_dest[$cnf_key] ?? []
+                );
+                continue;
+            }
             $no_sync_items = [];
             if (
                 !isset($cnf_dest[$cnf_key]) || !is_array($cnf_dest[$cnf_key]) || // new
                 (count($cnf_dest[$cnf_key]) > 0 && isset($cnf_dest[$cnf_key][0])) || // sequenced item
                 (count($cnf_dest[$cnf_key]) > 0 && isset($cnf_dest[$cnf_key]['@attributes']['uuid'])) // mvc array
             ) {
-                /* gather items with nosync set, exclude records with implicit order (legacy) */
-                $exclude_nosync = in_array($path, ['filter.rule', 'nat.rule', 'nat.outbound.rule']);
-                if (!$exclude_nosync && isset($cnf_dest[$cnf_key]) && is_array($cnf_dest[$cnf_key])) {
-                    foreach ($cnf_dest[$cnf_key] as $record) {
-                        if (!empty($record['nosync'])) {
+                if (isset($cnf_dest[$cnf_key]) && is_array($cnf_dest[$cnf_key])) {
+                    foreach (ha_xmlrpc_config_rows($cnf_dest[$cnf_key]) as $record) {
+                        if (is_array($record) && !empty($record['nosync'])) {
                             $no_sync_items[] = $record;
                         }
                     }
@@ -106,7 +155,7 @@ function merge_config_attributes(&$cnf_source, &$cnf_dest, $path = '')
                 // (re)set destination array when new or containing a sequenced list of items
                 $cnf_dest[$cnf_key] = [];
             }
-            merge_config_attributes($cnf_value, $cnf_dest[$cnf_key], $path);
+            merge_config_attributes($cnf_value, $cnf_dest[$cnf_key], $child_path);
             if (!empty($no_sync_items)) {
                 /* append nosync items, local ones on-top */
                 $cnf_dest[$cnf_key] = array_merge($no_sync_items, $cnf_dest[$cnf_key]);
@@ -135,7 +184,15 @@ function ha_xmlrpc_config_rows($value)
     if (!is_array($value)) {
         return [];
     }
-    return array_is_list($value) ? array_values($value) : [$value];
+    if (array_is_list($value)) {
+        return array_values($value);
+    }
+    // remove_nosync() intentionally unsets source rows and leaves gaps in
+    // numeric indexes. Those are still ordered rows, NOT one MVC singleton.
+    if (count(array_filter(array_keys($value), 'is_int')) === count($value)) {
+        return array_values($value);
+    }
+    return [$value];
 }
 
 function ha_xmlrpc_canonicalize($value)
@@ -295,6 +352,103 @@ function filter_configure_xmlrpc($syncitems = null)
 }
 
 /**
+ * Normalize native/MVC singleton or list storage without changing it.
+ */
+function ha_xmlrpc_policy_records($root, string $item): array
+{
+    if (!is_array($root) || $root === []) {
+        return [];
+    }
+    $rows = $root[$item] ?? [];
+    if ($rows === '' || $rows === null || $rows === []) {
+        return [];
+    }
+    if (!is_array($rows)) {
+        throw new RuntimeException('invalid HA policy records');
+    }
+    return array_is_list($rows) ? $rows : [$rows];
+}
+
+/**
+ * Keep CARP skew as a RECEIVER-local setting for synchronized interfaces.
+ *
+ * The native sender may still add 100 (legacy Etna -> new Rigi). We override
+ * that value ONLY on interfaces whose locally assigned HA policy synchronizes.
+ * Core/non-endpoint CARP entries retain their previous receiver skew when
+ * present. This must execute before restore_config_section_xmlrpc merges the
+ * incoming VIPs and before it computes its old-vs-new reconfigure plan.
+ */
+function ha_xmlrpc_apply_receiver_carp_skew(array &$incoming, array $local): void
+{
+    if (!isset($incoming['virtualip']['vip'])) {
+        return;
+    }
+    $root = $local['OPNsense']['ApiExtensions']['InterfaceSyncPolicy'] ?? [];
+    $policies = [];
+    $policiesByUuid = [];
+    foreach (ha_xmlrpc_policy_records($root['shared']['policies'] ?? [], 'policy') as $row) {
+        $id = trim((string)($row['id'] ?? ''));
+        $uuid = trim((string)($row['@attributes']['uuid'] ?? ''));
+        if ($id === '' || $uuid === '') {
+            throw new RuntimeException('invalid local HA sync policy');
+        }
+        $enabled = in_array($row['synchronize'] ?? null, [1, '1', true, 'yes', 'on'], true);
+        $policies[$id] = $enabled;
+        $policiesByUuid[$uuid] = $id;
+    }
+
+    $scope = [];
+    foreach (ha_xmlrpc_policy_records($root['assignments'] ?? [], 'assignment') as $row) {
+        $identifier = trim((string)($row['interface'] ?? ''));
+        $policyRef = trim((string)($row['policy_id'] ?? ''));
+        $policyId = $policiesByUuid[$policyRef] ?? $policyRef;
+        if ($identifier === '' || !array_key_exists($policyId, $policies)) {
+            throw new RuntimeException('invalid local HA policy assignment');
+        }
+        if ($policies[$policyId]) {
+            $scope[$identifier] = true;
+        }
+    }
+
+    $rawSkew = $local['hasync']['local_endpoint_carp_advskew'] ?? null;
+    $skew = null;
+    if ($rawSkew !== null && $rawSkew !== '') {
+        $text = (string)$rawSkew;
+        if (!preg_match('/^(0|[1-9][0-9]{0,2})$/D', $text) || (int)$text > 254) {
+            throw new RuntimeException('local endpoint CARP advskew must be an integer between 0 and 254');
+        }
+        $skew = $text;
+    }
+
+    $currentByKey = [];
+    foreach ($local['virtualip']['vip'] ?? [] as $vip) {
+        if (is_array($vip) && !empty($vip['vhid'])) {
+            $currentByKey[get_unique_vip_key($vip)] = $vip;
+        }
+    }
+    foreach ($incoming['virtualip']['vip'] as &$vip) {
+        if (!is_array($vip) || ($vip['mode'] ?? '') !== 'carp' || empty($vip['vhid'])) {
+            continue;
+        }
+        $interface = trim((string)($vip['interface'] ?? ''));
+        if (isset($scope[$interface])) {
+            if ($skew === null) {
+                throw new RuntimeException(
+                    'configure local endpoint CARP advskew before receiving synchronized CARP VIPs'
+                );
+            }
+            $vip['advskew'] = $skew;
+        } else {
+            $key = get_unique_vip_key($vip);
+            if (isset($currentByKey[$key]['advskew'])) {
+                $vip['advskew'] = $currentByKey[$key]['advskew'];
+            }
+        }
+    }
+    unset($vip);
+}
+
+/**
  * restore config section
  * @param $new_config
  * @return bool
@@ -312,6 +466,16 @@ function restore_config_section_xmlrpc($new_config)
 
     // save old config
     $old_config = $config;
+
+    // Native staticroutes is operator-selectable, but the local bootstrap
+    // connected network is never an HA-owned destination. Keep any
+    // preexisting receiver-local route and drop a conflicting sender route.
+    $suppressed = ha_sync_guard_bootstrap_routes($new_config, $config, true);
+    if ($suppressed > 0) {
+        log_msg(sprintf('HA XMLRPC ignored %d receiver bootstrap-overlapping static routes', $suppressed), LOG_WARNING);
+    }
+
+    ha_xmlrpc_apply_receiver_carp_skew($new_config, $config);
 
     $vhidVipsInNewConfig = [];
     if (isset($new_config['virtualip']['vip'])) {

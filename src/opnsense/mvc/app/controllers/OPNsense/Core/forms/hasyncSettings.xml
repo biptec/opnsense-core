@@ -50,6 +50,19 @@
         <label><![CDATA[Configuration Synchronization Settings (XMLRPC Sync) <a href="/ui/core/hasync_status">Perform synchronization </a>]]></label>
     </field>
     <field>
+        <id>hasync.local_endpoint_carp_advskew</id>
+        <label>Local endpoint CARP advskew</label>
+        <type>text</type>
+        <help>
+            The advertisement skew used on this router for synchronized CARP VIPs
+            attached to interfaces with a synchronized HA policy. Range: 0 to 254.
+            This value is never copied from the peer; for example, Etna uses 0
+            and Rigi uses 100. Node-local/core CARP VIP settings are preserved.
+            Configure this before receiving endpoint Virtual IPs.
+            CLI: configctl system ha exec set_local_carp_skew 100
+        </help>
+    </field>
+    <field>
         <id>hasync.synchronizetoip</id>
         <label>Synchronize Config</label>
         <type>text</type>

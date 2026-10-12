@@ -81,7 +81,6 @@ class AssignmentController extends ApiMutableModelControllerBase
                 'policy_id' => '',
                 'policy_description' => '',
                 'synchronize' => false,
-                'owner' => 'unassigned',
                 'ha_service_enabled' => false,
             ];
         }
@@ -107,23 +106,6 @@ class AssignmentController extends ApiMutableModelControllerBase
         return $options;
     }
 
-    private function readonlyReplica(string $identifier): ?array
-    {
-        if (!$this->hasPolicyManager() || $identifier === '') {
-            return null;
-        }
-        $state = $this->policyState($identifier);
-        if ($state['owner'] !== 'ha_peer') {
-            return null;
-        }
-        return [
-            'result' => 'failed',
-            'validations' => [
-                'interface.ha_policy' => gettext('This interface is an HA peer replica and is read-only on this node.')
-            ]
-        ];
-    }
-
     private function configuredInterfaceNames(): array
     {
         $config = Config::getInstance()->toArray();
@@ -140,7 +122,6 @@ class AssignmentController extends ApiMutableModelControllerBase
             $identifier = trim((string)($row['identifier'] ?? ''));
             $state = $this->policyState($identifier);
             $row['ha_policy'] = $state['policy_id'];
-            $row['ha_owner'] = $state['owner'];
             $row['ha_synchronize'] = $state['synchronize'] ? '1' : '0';
         }
         unset($row);
@@ -149,9 +130,6 @@ class AssignmentController extends ApiMutableModelControllerBase
 
     public function setItemAction($ifname)
     {
-        if (($readonly = $this->readonlyReplica((string)$ifname)) !== null) {
-            return $readonly;
-        }
         if (($validation = $this->validatePolicyPayload()) !== null) {
             return $validation;
         }
@@ -222,7 +200,6 @@ class AssignmentController extends ApiMutableModelControllerBase
         $identifier = $ifname === null ? '' : trim((string)$ifname);
         $state = $this->policyState($identifier);
         $result['interface']['ha_policy'] = $this->policyOptions($state['policy_id']);
-        $result['interface']['ha_owner'] = $state['owner'];
         $result['interface']['ha_synchronize'] = $state['synchronize'] ? '1' : '0';
         return $result;
     }
@@ -231,11 +208,6 @@ class AssignmentController extends ApiMutableModelControllerBase
     {
         if (!$this->request->isPost()) {
             return ['status' => 'failed'];
-        }
-        foreach (explode(',', (string)$ifnames) as $ifname) {
-            if (($readonly = $this->readonlyReplica(trim($ifname))) !== null) {
-                return $readonly;
-            }
         }
         Config::getInstance()->lock();
         $paths = [

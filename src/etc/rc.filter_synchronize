@@ -37,6 +37,7 @@ require_once("filter.inc");
 require_once("util.inc");
 require_once("interfaces.inc");
 require_once("XMLRPC_Client.inc");
+require_once(__DIR__ . "/inc/ha_sync_route_guard.inc");
 
 exit_on_bootup();
 
@@ -219,6 +220,13 @@ function carp_sync_xml($url, $username, $password, $sections, $debug)
     // remove items which may not be synced
     remove_nosync($transport_data);
 
+    // A route to the sender's own connected bootstrap CIDR must never be
+    // exported as a peer route; it could blackhole receiver management.
+    $suppressed = ha_sync_guard_bootstrap_routes($transport_data, $config);
+    if ($suppressed > 0) {
+        log_msg(sprintf('HA XMLRPC excluded %d bootstrap-overlapping static routes', $suppressed), LOG_WARNING);
+    }
+
     // ***** post processing *****
     // dhcpd, unchanged from legacy code (may need some inspection later)
     if (is_array($transport_data['dhcpd'])) {
@@ -271,24 +279,30 @@ if (!empty($config['hasync'])) {
     $restart_services = in_array('restart_services', $argv);
     $pre_check_master = in_array('pre_check_master', $argv);
     $requested_syncitems = null;
+    $one_shot_target = null;
     foreach ($argv as $argument) {
         if (str_starts_with($argument, 'syncitems=')) {
             if ($requested_syncitems !== null) {
                 throw new RuntimeException('syncitems may only be specified once');
             }
             $requested_syncitems = array_values(array_unique(array_filter(array_map(
-                'trim',
-                explode(',', substr($argument, strlen('syncitems=')))
+                'trim', explode(',', substr($argument, strlen('syncitems=')))
             ))));
+        } elseif (str_starts_with($argument, 'peertarget=')) {
+            if ($one_shot_target !== null) {
+                throw new RuntimeException('peertarget may only be specified once');
+            }
+            $one_shot_target = trim(substr($argument, strlen('peertarget=')));
         }
     }
     if (in_array('-h', $argv)) {
         // show help and exit
-        echo "rc.filter_synchronize [debug] [restart_services] [pre_check_master] [syncitems=item1,item2]\n";
+        echo "rc.filter_synchronize [debug] [restart_services] [pre_check_master] [syncitems=item1,item2] [peertarget=HA_PEER_IP]\n";
         echo "debug - enable debug output\n";
         echo "restart_services - restart remote configured services\n";
         echo "pre_check_master - exit when carp is not in master mode\n";
         echo "syncitems - synchronize only listed items enabled in High Availability settings\n";
+        echo "peertarget - select the configured pfsync peer for this one run; never persists in config\n";
         exit;
     }
 
@@ -303,6 +317,26 @@ if (!empty($config['hasync'])) {
                 }
             }
         }
+    }
+
+    // A secondary can initiate configuration synchronization only to its
+    // configured pfsync peer. Never accept arbitrary hosts: the HA credentials
+    // must not be forwarded to an attacker-supplied XMLRPC endpoint.
+    if ($one_shot_target !== null) {
+        $allowed = trim((string)($hasync['pfsyncpeerip'] ?? ''));
+        if ($allowed === '' || filter_var($allowed, FILTER_VALIDATE_IP) === false ||
+            $one_shot_target !== $allowed || $requested_syncitems === null) {
+            throw new RuntimeException('one-shot HA target must equal the configured pfsync peer and specify syncitems');
+        }
+        if (empty($hasync['username']) || empty($hasync['password'])) {
+            throw new RuntimeException('one-shot HA synchronization requires locally configured HA credentials');
+        }
+        // The core transfer uses this local copy; plugin callbacks call
+        // xmlrpc_execute(), which must receive the same temporary peer.
+        // A process-local override avoids writing a secondary outbound target
+        // to config.xml or changing normal Etna -> Rigi automatic sync.
+        $hasync['synchronizetoip'] = $one_shot_target;
+        $GLOBALS['opnsense_hasync_runtime_peer'] = $one_shot_target;
     }
 
     if (empty($hasync['synchronizetoip'])) {

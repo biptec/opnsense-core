@@ -1,7 +1,7 @@
 <model>
     <mount>//hasync</mount>
     <migration_prefix>MHA</migration_prefix>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <description>HA sync</description>
     <items>
         <disablepreempt type="BooleanField">
@@ -31,6 +31,12 @@
             </OptionValues>
         </pfsyncversion>
         <pfsyncdefer type="BooleanField"/>
+        <!-- Node-local: never synchronized through XMLRPC. Unlike the legacy
+             sender +100 transformation, this applies on the receiving node. -->
+        <local_endpoint_carp_advskew type="IntegerField">
+            <MinimumValue>0</MinimumValue>
+            <MaximumValue>254</MaximumValue>
+        </local_endpoint_carp_advskew>
         <synchronizetoip type="TextField">
             <!-- XXX: accepts uri or address -->
         </synchronizetoip>

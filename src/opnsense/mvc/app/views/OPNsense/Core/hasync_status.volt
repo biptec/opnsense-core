@@ -26,6 +26,57 @@
 
 <script>
     $( document ).ready(function() {
+        // This panel works on either HA node, including a secondary without
+        // a permanently configured synchronization target.
+        ajaxGet('/api/core/hasync_status/peer', {}, function(data) {
+            const status = $('#one_shot_sync_status');
+            const button = $('#one_shot_sync_run');
+            const choices = $('#one_shot_sync_items');
+            choices.empty();
+            if (!data || data.status !== 'ok' || !data.target) {
+                status.text((data && data.message) || '{{ lang._("Configure an HA pfsync peer before synchronizing.") }}');
+                return;
+            }
+            $('#one_shot_sync_target').val(data.target);
+            Object.entries(data.items || {}).forEach(function([id, title]) {
+                const label = $('<label>').addClass('checkbox-inline');
+                const input = $('<input>').attr('type', 'checkbox')
+                    .addClass('one_shot_sync_check')
+                    .val(id);
+                label.append(input).append($('<span>').text(' ' + title));
+                choices.append(label);
+            });
+            status.text('{{ lang._("Select sections, confirm the HA peer address and synchronize.") }}');
+            button.prop('disabled', false);
+        });
+        $('#one_shot_sync_run').on('click', function() {
+            const target = ($('#one_shot_sync_target').val() || '').trim();
+            const items = $('.one_shot_sync_check:checked').map(function() {
+                return $(this).val();
+            }).get();
+            if (!target || !items.length) {
+                $('#one_shot_sync_status').text('{{ lang._("Select a peer and at least one section.") }}');
+                return;
+            }
+            stdDialogConfirm(
+                '{{ lang._("Synchronize selected HA configuration?") }}',
+                '{{ lang._("Selected sections on the peer will be replaced. The persistent synchronization direction will not change.") }}',
+                '{{ lang._("Synchronize") }}',
+                '{{ lang._("Cancel") }}',
+                function() {
+                    $('#one_shot_sync_run').prop('disabled', true);
+                    ajaxCall('/api/core/hasync_status/sync', {items: items, target: target}, function(result) {
+                        $('#one_shot_sync_run').prop('disabled', false);
+                        $('#one_shot_sync_status').text(result && result.status === 'ok'
+                            ? '{{ lang._("Selected HA configuration synchronized successfully.") }}'
+                            : (result && result.message) || '{{ lang._("Synchronization failed.") }}');
+                        if (result && result.status === 'ok') {
+                            $('#grid_services').bootgrid('reload');
+                        }
+                    });
+                }
+            );
+        });
         ajaxGet('/api/core/hasync_status/version', {}, function(data){
             if (data.response && data.response.firmware) {
                 $("#remote_firmware_version").text(data.response.firmware.version);
@@ -167,6 +218,22 @@
 <section class="page-content-main">
     <div class="container-fluid">
         <div class="row">
+            <div class="col-xs-12">
+                <div class="content-box">
+                    <h4>{{ lang._("Synchronize to HA peer (one-time)") }}</h4>
+                    <p class="help-block">{{ lang._("Choose the HA pfsync peer and specific sections. This runs once without changing the normal configuration synchronization target.") }}</p>
+                    <div class="form-group">
+                        <label for="one_shot_sync_target">{{ lang._("Receiving HA peer IP") }}</label>
+                        <input id="one_shot_sync_target" class="form-control" type="text"
+                            placeholder="{{ lang._("Configured pfsync peer IP") }}" />
+                    </div>
+                    <div class="form-group" id="one_shot_sync_items"></div>
+                    <button type="button" id="one_shot_sync_run" class="btn btn-primary" disabled>
+                        <i class="fa fa-repeat fa-fw"></i> {{ lang._("Synchronize selected sections") }}
+                    </button>
+                    <div id="one_shot_sync_status" class="help-block"></div>
+                </div>
+            </div>
             <div id="status_query"  class="alert alert-info" role="alert">
                 {{ lang._('Loading....') }}
             </div>
