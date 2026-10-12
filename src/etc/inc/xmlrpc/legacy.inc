@@ -78,27 +78,74 @@ function does_vip_exist($vip)
 }
 
 /**
- * merge attributes from source array to destination
- * updates leaves and overwrites sequenced arrays (container types).
- * @param array $cnf_source source data
- * @param array $cnf_dest target
+ * Preserve node-local firewall/NAT rules when applying HA synchronised rules.
+ *
+ * These lists are order-sensitive: copying the primary's list would erase
+ * receiver-local nosync rules, while prepending all local rules would move
+ * their precedence. Fill old synchronized slots from the incoming sequence
+ * and retain each local nosync rule in its previous relative position.
+ * Excess incoming rules append in sender order; removed synced rules vanish.
+ *
+ * The sender's remove_nosync() removes its own local rules. Reject unexpected
+ * nosync records received over XMLRPC, rather than adopting another node's
+ * local rule. No UUID capture/handoff is involved.
+ */
+function ha_xmlrpc_merge_ordered_nosync($source, $local): array
+{
+    $incoming = ha_xmlrpc_config_rows($source);
+    $existing = ha_xmlrpc_config_rows($local);
+    foreach ($incoming as $row) {
+        if (!is_array($row) || !empty($row['nosync'])) {
+            throw new RuntimeException('HA synchronized ordered rules contain an invalid or node-local record');
+        }
+    }
+    foreach ($existing as $row) {
+        if (!is_array($row)) {
+            throw new RuntimeException('local ordered rules contain an invalid record');
+        }
+    }
+
+    $result = [];
+    $next = 0;
+    foreach ($existing as $row) {
+        if (!empty($row['nosync'])) {
+            $result[] = $row;
+        } elseif ($next < count($incoming)) {
+            $result[] = $incoming[$next++];
+        }
+    }
+    for (; $next < count($incoming); ++$next) {
+        $result[] = $incoming[$next];
+    }
+    return $result;
+}
+
+/**
+ * Merge source attributes into destination while preserving node-local items.
+ * Ordered firewall/NAT collections require a position-preserving merge.
  */
 function merge_config_attributes(&$cnf_source, &$cnf_dest, $path = '')
 {
     foreach ($cnf_source as $cnf_key => &$cnf_value) {
         if (is_array($cnf_value)) {
-            $path = empty($path) ? $cnf_key : sprintf('%s.%s', $path, $cnf_key);
+            // Compute the path per child. Mutating $path across siblings
+            // incorrectly changes later paths (filter.rule -> nat.rule).
+            $child_path = $path === '' ? $cnf_key : sprintf('%s.%s', $path, $cnf_key);
+            if (in_array($child_path, ['filter.rule', 'nat.rule', 'nat.outbound.rule'], true)) {
+                $cnf_dest[$cnf_key] = ha_xmlrpc_merge_ordered_nosync(
+                    $cnf_value, $cnf_dest[$cnf_key] ?? []
+                );
+                continue;
+            }
             $no_sync_items = [];
             if (
                 !isset($cnf_dest[$cnf_key]) || !is_array($cnf_dest[$cnf_key]) || // new
                 (count($cnf_dest[$cnf_key]) > 0 && isset($cnf_dest[$cnf_key][0])) || // sequenced item
                 (count($cnf_dest[$cnf_key]) > 0 && isset($cnf_dest[$cnf_key]['@attributes']['uuid'])) // mvc array
             ) {
-                /* gather items with nosync set, exclude records with implicit order (legacy) */
-                $exclude_nosync = in_array($path, ['filter.rule', 'nat.rule', 'nat.outbound.rule']);
-                if (!$exclude_nosync && isset($cnf_dest[$cnf_key]) && is_array($cnf_dest[$cnf_key])) {
-                    foreach ($cnf_dest[$cnf_key] as $record) {
-                        if (!empty($record['nosync'])) {
+                if (isset($cnf_dest[$cnf_key]) && is_array($cnf_dest[$cnf_key])) {
+                    foreach (ha_xmlrpc_config_rows($cnf_dest[$cnf_key]) as $record) {
+                        if (is_array($record) && !empty($record['nosync'])) {
                             $no_sync_items[] = $record;
                         }
                     }
@@ -106,7 +153,7 @@ function merge_config_attributes(&$cnf_source, &$cnf_dest, $path = '')
                 // (re)set destination array when new or containing a sequenced list of items
                 $cnf_dest[$cnf_key] = [];
             }
-            merge_config_attributes($cnf_value, $cnf_dest[$cnf_key], $path);
+            merge_config_attributes($cnf_value, $cnf_dest[$cnf_key], $child_path);
             if (!empty($no_sync_items)) {
                 /* append nosync items, local ones on-top */
                 $cnf_dest[$cnf_key] = array_merge($no_sync_items, $cnf_dest[$cnf_key]);
@@ -135,7 +182,15 @@ function ha_xmlrpc_config_rows($value)
     if (!is_array($value)) {
         return [];
     }
-    return array_is_list($value) ? array_values($value) : [$value];
+    if (array_is_list($value)) {
+        return array_values($value);
+    }
+    // remove_nosync() intentionally unsets source rows and leaves gaps in
+    // numeric indexes. Those are still ordered rows, NOT one MVC singleton.
+    if (count(array_filter(array_keys($value), 'is_int')) === count($value)) {
+        return array_values($value);
+    }
+    return [$value];
 }
 
 function ha_xmlrpc_canonicalize($value)
