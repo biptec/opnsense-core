@@ -30,6 +30,7 @@ namespace OPNsense\Core\Api;
 
 use OPNsense\Base\ApiControllerBase;
 use OPNsense\Core\Backend;
+use OPNsense\Core\Config;
 use OPNsense\Core\Hasync;
 
 /**
@@ -97,6 +98,45 @@ class HasyncStatusController extends ApiControllerBase
      * Discover the configured HA peer and selectable categories, including on
      * a secondary with no persistent configuration synchronization target.
      */
+    /**
+     * Read the receiver-local CARP skew without relying on a configured
+     * outbound XMLRPC target. Used by node bootstrap and operational checks.
+     */
+    public function localCarpSkewAction()
+    {
+        if (!$this->request->isGet()) {
+            return ['status' => 'failed', 'message' => 'GET required'];
+        }
+        $value = (string)(Config::getInstance()->object()->hasync->local_endpoint_carp_advskew ?? '');
+        return ['status' => 'ok', 'value' => $value];
+    }
+
+    /**
+     * Bootstrap and operator API for one node-local CARP setting only.
+     * Does not trigger XMLRPC, alter HA credentials, or reset other settings.
+     */
+    public function setLocalCarpSkewAction()
+    {
+        if (!$this->request->isPost()) {
+            return ['status' => 'failed', 'message' => 'POST required'];
+        }
+        $this->throwReadOnly();
+        $value = $this->request->getPost('value');
+        if (!is_string($value) || !preg_match('/^(0|[1-9][0-9]{0,2})$/D', $value) ||
+            (int)$value > 254) {
+            return ['status' => 'failed', 'message' => 'local endpoint CARP advskew must be an integer between 0 and 254'];
+        }
+
+        $config = Config::getInstance();
+        $config->lock();
+        $hasync = $config->object()->hasync;
+        if ((string)($hasync->local_endpoint_carp_advskew ?? '') !== $value) {
+            $hasync->local_endpoint_carp_advskew = $value;
+            $config->save();
+        }
+        return ['status' => 'ok', 'value' => $value];
+    }
+
     public function peerAction()
     {
         if (!$this->request->isGet()) {
