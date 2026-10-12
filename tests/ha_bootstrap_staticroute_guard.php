@@ -42,6 +42,7 @@ $rigi['staticroutes']['route'] = [];
 $endpointV4 = ['network' => '203.0.113.0/24', 'gateway' => 'endpoint-v4', 'descr' => 'Issue103 v4'];
 $endpointV6 = ['network' => '2001:db8:103::/64', 'gateway' => 'endpoint-v6', 'descr' => 'Issue103 v6'];
 $legacyCoder = $etna['staticroutes']['route'][0];
+$coderHost = ['network' => '10.200.0.202/32', 'gateway' => 'nc-ep-coder-v4', 'descr' => 'Coder host return route'];
 $incoming = ['staticroutes' => ['route' => [$legacyCoder, $endpointV4, $endpointV6]]];
 
 check_same(true, ha_sync_cidrs_overlap('10.200.0.0/24', '10.200.0.181/24'), 'same /24');
@@ -57,6 +58,11 @@ check_same(false, ha_sync_bootstrap_route_conflict($endpointV6, $rigi), 'IPv6 do
 check_same(false, ha_sync_bootstrap_route_conflict(['network' => '0.0.0.0/0'], $rigi), 'default route less specific than connected');
 check_same(false, ha_sync_bootstrap_route_conflict(['network' => '10.200.0.0/16'], $rigi), 'supernet cannot displace connected /24');
 check_same(true, ha_sync_bootstrap_route_conflict(['network' => '10.200.0.128/25'], $rigi), 'more-specific bad route must be suppressed');
+check_same(false, ha_sync_bootstrap_route_conflict($coderHost, $etna), 'Etna must keep explicit Coder /32 return route');
+check_same(false, ha_sync_bootstrap_route_conflict($coderHost, $rigi), 'Rigi must receive explicit Coder /32 return route');
+check_same(true, ha_sync_bootstrap_route_conflict(['network' => '10.200.0.180/32'], $etna), 'never hijack Etna own bootstrap address');
+check_same(true, ha_sync_bootstrap_route_conflict(['network' => '10.200.0.181/32'], $rigi), 'never hijack Rigi own bootstrap address');
+check_same(false, ha_sync_bootstrap_route_conflict(['network' => '10.200.0.202/128'], $rigi), 'invalid family is left to native route validation');
 check_same(false, ha_sync_bootstrap_route_conflict(['network' => '10.32.200.0/30'], $rigi), 'endpoint VLAN route is not a bootstrap connected route');
 
 $onWire = $incoming;
@@ -69,6 +75,17 @@ $recv = $incoming;
 check_same(1, ha_sync_guard_bootstrap_routes($recv, $rigi, true), 'receiver protects itself from old unguarded Etna payload');
 check_same([$endpointV4, $endpointV6], $recv['staticroutes']['route'], 'new Rigi only applies safe routes');
 check_same([], $rigi['staticroutes']['route'], 'receiver local config not mutated before merge');
+
+$hostRouteSend = ['staticroutes' => ['route' => [$legacyCoder, $coderHost, $endpointV4, $endpointV6]]];
+check_same(1, ha_sync_guard_bootstrap_routes($hostRouteSend, $etna, false),
+    'sender discards old /24 but keeps Coder /32');
+check_same([$coderHost, $endpointV4, $endpointV6], $hostRouteSend['staticroutes']['route'],
+    'Coder return route and both endpoint routes survive on wire');
+$hostRouteReceive = ['staticroutes' => ['route' => [$legacyCoder, $coderHost, $endpointV4, $endpointV6]]];
+check_same(1, ha_sync_guard_bootstrap_routes($hostRouteReceive, $rigi, true),
+    'receiver discards /24 without dropping Coder /32');
+check_same([$coderHost, $endpointV4, $endpointV6], $hostRouteReceive['staticroutes']['route'],
+    'receiver receives the Coder /32 return route');
 
 $recvEtna = $incoming;
 check_same(1, ha_sync_guard_bootstrap_routes($recvEtna, $etna, true), 'receiver retains intentional old Etna local route');
@@ -96,5 +113,9 @@ check_same(true, ha_sync_bootstrap_route_conflict(['network' => 'fd42:103:3990::
     'IPv6 bootstrap network protected');
 check_same(false, ha_sync_bootstrap_route_conflict(['network' => '2001:db8:103::/64'], $ipv6),
     'IPv6 documentation route still synchronized');
+check_same(false, ha_sync_bootstrap_route_conflict(['network' => 'fd42:103:3990::202/128'], $ipv6),
+    'IPv6 host-only endpoint return route survives');
+check_same(true, ha_sync_bootstrap_route_conflict(['network' => 'fd42:103:3990::2/128'], $ipv6),
+    'IPv6 local bootstrap address cannot be hijacked');
 
-echo "HA_BOOTSTRAP_STATICROUTE_GUARD_PASS cases=24 safe_routes=2 suppressed_bootstrap=1\n";
+echo "HA_BOOTSTRAP_STATICROUTE_GUARD_PASS coder_host_routes_preserved bootstrap_subnets_protected\n";

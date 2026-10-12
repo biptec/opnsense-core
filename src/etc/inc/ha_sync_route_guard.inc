@@ -4,11 +4,11 @@
  * Native HA safety: never push routes over a router's local bootstrap network.
  *
  * Interfaces/VLAN and HAProxy use policy_id for symmetric object sync.
- * Native "staticroutes" remains operator-selectable, but a connected
- * bootstrap network is node-local even when some endpoint provides a
- * competing static route for that subnet (e.g. a Coder routed-test gateway).
- * Transporting that static route can replace the receiver's connected
- * management route and disconnect the peer from the bootstrap network.
+ * Native "staticroutes" remains operator-selectable. A connected bootstrap
+ * subnet is node-local even when a Coder endpoint supplies a competing route
+ * for the whole subnet. Unlike that route, a host-specific Coder return route
+ * (/32 or /128) is intentional and must remain synchronized. Guard the
+ * subnet route, but never discard an unrelated endpoint host return route.
  *
  * These helpers are pure array transforms: no config writes, shell commands,
  * global state, or network access. PHP >= 8.1 (OPNsense baseline).
@@ -118,13 +118,20 @@ function ha_sync_bootstrap_route_conflict(array $route, array $local): bool
     $routeCidr = ha_sync_parse_cidr($network);
     foreach (ha_sync_bootstrap_networks($local) as $bootstrap) {
         $localCidr = ha_sync_parse_cidr($bootstrap);
-        // A less-specific route (notably default 0/0) cannot displace
-        // the bootstrap network's more-specific connected route.
-        if (strlen($routeCidr[0]) === strlen($localCidr[0])
-            && $routeCidr[1] >= $localCidr[1]
-            && ha_sync_cidrs_overlap($network, $bootstrap)) {
-            return true;
+        // A less-specific route cannot displace the connected network.
+        if (strlen($routeCidr[0]) !== strlen($localCidr[0])
+            || $routeCidr[1] < $localCidr[1]
+            || !ha_sync_cidrs_overlap($network, $bootstrap)) {
+            continue;
         }
+        // A deliberate host-only return route (for example, Coder
+        // 10.200.0.202/32) must be allowed; it affects only that endpoint,
+        // not the connected bootstrap subnet. Never replace our own address.
+        if ($routeCidr[1] === strlen($routeCidr[0]) * 8
+            && $routeCidr[0] !== $localCidr[0]) {
+            continue;
+        }
+        return true;
     }
     return false;
 }
