@@ -53,9 +53,37 @@ try {
             xmlrpc_execute('opnsense.configd_reload_all_templates');
             echo json_encode(['status' => 'done']);
             break;
+        case 'get_local_carp_skew':
+            global $config;
+            echo json_encode([
+                'status' => 'ok',
+                'value' => (string)($config['hasync']['local_endpoint_carp_advskew'] ?? ''),
+            ]);
+            break;
+        case 'set_local_carp_skew':
+            global $config;
+            if (!preg_match('/^(0|[1-9][0-9]{0,2})$/D', $service) || (int)$service > 254 ||
+                $service_id !== '') {
+                throw new \InvalidArgumentException('local endpoint CARP advskew must be an integer between 0 and 254');
+            }
+            \OPNsense\Core\Config::getInstance()->lock();
+            $config['hasync']['local_endpoint_carp_advskew'] = $service;
+            write_config('Set node-local endpoint CARP advskew');
+            echo json_encode(['status' => 'ok', 'value' => $service]);
+            break;
         case 'exec_sync':
             if ($service !== '') {
-                $result = trim(configdp_run('filter sync_selected', [$service]));
+                if ($service_id !== '') {
+                    global $config;
+                    $allowed = trim((string)($config['hasync']['pfsyncpeerip'] ?? ''));
+                    if ($allowed === '' || filter_var($allowed, FILTER_VALIDATE_IP) === false ||
+                        $service_id !== $allowed) {
+                        throw new \InvalidArgumentException('one-shot target must be the configured HA pfsync peer');
+                    }
+                    $result = trim(configdp_run('filter sync_peer', [$service, $service_id]));
+                } else {
+                    $result = trim(configdp_run('filter sync_selected', [$service]));
+                }
                 if ($result !== 'ok') {
                     throw new \RuntimeException('selective HA configuration synchronization failed');
                 }

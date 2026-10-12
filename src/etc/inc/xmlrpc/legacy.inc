@@ -295,6 +295,103 @@ function filter_configure_xmlrpc($syncitems = null)
 }
 
 /**
+ * Normalize native/MVC singleton or list storage without changing it.
+ */
+function ha_xmlrpc_policy_records($root, string $item): array
+{
+    if (!is_array($root) || $root === []) {
+        return [];
+    }
+    $rows = $root[$item] ?? [];
+    if ($rows === '' || $rows === null || $rows === []) {
+        return [];
+    }
+    if (!is_array($rows)) {
+        throw new RuntimeException('invalid HA policy records');
+    }
+    return array_is_list($rows) ? $rows : [$rows];
+}
+
+/**
+ * Keep CARP skew as a RECEIVER-local setting for synchronized interfaces.
+ *
+ * The native sender may still add 100 (legacy Etna -> new Rigi). We override
+ * that value ONLY on interfaces whose locally assigned HA policy synchronizes.
+ * Core/non-endpoint CARP entries retain their previous receiver skew when
+ * present. This must execute before restore_config_section_xmlrpc merges the
+ * incoming VIPs and before it computes its old-vs-new reconfigure plan.
+ */
+function ha_xmlrpc_apply_receiver_carp_skew(array &$incoming, array $local): void
+{
+    if (!isset($incoming['virtualip']['vip'])) {
+        return;
+    }
+    $root = $local['OPNsense']['ApiExtensions']['InterfaceSyncPolicy'] ?? [];
+    $policies = [];
+    $policiesByUuid = [];
+    foreach (ha_xmlrpc_policy_records($root['shared']['policies'] ?? [], 'policy') as $row) {
+        $id = trim((string)($row['id'] ?? ''));
+        $uuid = trim((string)($row['@attributes']['uuid'] ?? ''));
+        if ($id === '' || $uuid === '') {
+            throw new RuntimeException('invalid local HA sync policy');
+        }
+        $enabled = in_array($row['synchronize'] ?? null, [1, '1', true, 'yes', 'on'], true);
+        $policies[$id] = $enabled;
+        $policiesByUuid[$uuid] = $id;
+    }
+
+    $scope = [];
+    foreach (ha_xmlrpc_policy_records($root['assignments'] ?? [], 'assignment') as $row) {
+        $identifier = trim((string)($row['interface'] ?? ''));
+        $policyRef = trim((string)($row['policy_id'] ?? ''));
+        $policyId = $policiesByUuid[$policyRef] ?? $policyRef;
+        if ($identifier === '' || !array_key_exists($policyId, $policies)) {
+            throw new RuntimeException('invalid local HA policy assignment');
+        }
+        if ($policies[$policyId]) {
+            $scope[$identifier] = true;
+        }
+    }
+
+    $rawSkew = $local['hasync']['local_endpoint_carp_advskew'] ?? null;
+    $skew = null;
+    if ($rawSkew !== null && $rawSkew !== '') {
+        $text = (string)$rawSkew;
+        if (!preg_match('/^(0|[1-9][0-9]{0,2})$/D', $text) || (int)$text > 254) {
+            throw new RuntimeException('local endpoint CARP advskew must be an integer between 0 and 254');
+        }
+        $skew = $text;
+    }
+
+    $currentByKey = [];
+    foreach ($local['virtualip']['vip'] ?? [] as $vip) {
+        if (is_array($vip) && !empty($vip['vhid'])) {
+            $currentByKey[get_unique_vip_key($vip)] = $vip;
+        }
+    }
+    foreach ($incoming['virtualip']['vip'] as &$vip) {
+        if (!is_array($vip) || ($vip['mode'] ?? '') !== 'carp' || empty($vip['vhid'])) {
+            continue;
+        }
+        $interface = trim((string)($vip['interface'] ?? ''));
+        if (isset($scope[$interface])) {
+            if ($skew === null) {
+                throw new RuntimeException(
+                    'configure local endpoint CARP advskew before receiving synchronized CARP VIPs'
+                );
+            }
+            $vip['advskew'] = $skew;
+        } else {
+            $key = get_unique_vip_key($vip);
+            if (isset($currentByKey[$key]['advskew'])) {
+                $vip['advskew'] = $currentByKey[$key]['advskew'];
+            }
+        }
+    }
+    unset($vip);
+}
+
+/**
  * restore config section
  * @param $new_config
  * @return bool
@@ -312,6 +409,8 @@ function restore_config_section_xmlrpc($new_config)
 
     // save old config
     $old_config = $config;
+
+    ha_xmlrpc_apply_receiver_carp_skew($new_config, $config);
 
     $vhidVipsInNewConfig = [];
     if (isset($new_config['virtualip']['vip'])) {

@@ -93,6 +93,27 @@ class HasyncStatusController extends ApiControllerBase
         });
     }
 
+    /**
+     * Discover the configured HA peer and selectable categories, including on
+     * a secondary with no persistent configuration synchronization target.
+     */
+    public function peerAction()
+    {
+        if (!$this->request->isGet()) {
+            return ['status' => 'failed', 'message' => 'GET required'];
+        }
+        $model = new Hasync();
+        $target = trim((string)$model->pfsyncpeerip);
+        if ($target !== '' && filter_var($target, FILTER_VALIDATE_IP) === false) {
+            return ['status' => 'failed', 'message' => 'HA pfsync peer is not a valid IP address'];
+        }
+        return [
+            'status' => 'ok',
+            'target' => $target,
+            'items' => $this->selectedSyncItems(),
+        ];
+    }
+
     public function syncAction()
     {
         $items = $this->request->getPost('items');
@@ -114,8 +135,18 @@ class HasyncStatusController extends ApiControllerBase
             }
         }
 
+        // One-time peer selection is explicitly restricted to the HA pfsync
+        // neighbor, not any remote URL. This prevents forwarding HA credentials
+        // to untrusted destinations.
+        $target = trim((string)$this->request->getPost('target', 'string', ''));
+        if ($target !== '') {
+            $allowed = trim((string)(new Hasync())->pfsyncpeerip);
+            if ($allowed === '' || filter_var($allowed, FILTER_VALIDATE_IP) === false || $target !== $allowed) {
+                return ['status' => 'failed', 'message' => 'target must equal the configured HA pfsync peer'];
+            }
+        }
         $result = json_decode(
-            (new Backend())->configdpRun('system ha exec', ['exec_sync', implode(',', $requested), ''], false, 300),
+            (new Backend())->configdpRun('system ha exec', ['exec_sync', implode(',', $requested), $target], false, 300),
             true
         );
         if (!is_array($result) || ($result['status'] ?? '') !== 'ok') {
@@ -124,7 +155,7 @@ class HasyncStatusController extends ApiControllerBase
                 'message' => is_array($result) ? trim((string)($result['message'] ?? 'HA synchronization failed')) : 'invalid HA synchronization response',
             ];
         }
-        return ['status' => 'ok', 'items' => $requested];
+        return ['status' => 'ok', 'items' => $requested, 'target' => $target];
     }
 
     public function stopAction($service = null, $service_id = null)
