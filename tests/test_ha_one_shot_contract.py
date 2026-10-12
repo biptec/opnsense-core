@@ -16,6 +16,12 @@ class OneShotHASyncContract(unittest.TestCase):
         self.assertIn("filter_var($allowed, FILTER_VALIDATE_IP)", rc)
         self.assertIn("$hasync['synchronizetoip'] = $one_shot_target", rc)
         self.assertNotIn("$config['hasync']['synchronizetoip'] = $one_shot_target", rc)
+        self.assertIn("$GLOBALS['opnsense_hasync_runtime_peer'] = $one_shot_target", rc)
+        client = (SRC / "etc/inc/XMLRPC_Client.inc").read_text()
+        self.assertIn("$runtime_peer = $GLOBALS['opnsense_hasync_runtime_peer'] ?? null", client)
+        self.assertIn("$runtime_peer !== $configured_peer", client)
+        self.assertIn("$hasync['synchronizetoip'] = $runtime_peer", client)
+        self.assertNotIn("$config['hasync']['synchronizetoip'] = $runtime_peer", client)
         self.assertIn("!empty($hasync['password'])", rc.replace("empty($hasync['password'])", "!empty($hasync['password'])"))
 
     def test_cli_api_and_gui_expose_selective_peer_sync(self):

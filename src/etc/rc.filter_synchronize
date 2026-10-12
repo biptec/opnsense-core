@@ -331,9 +331,12 @@ if (!empty($config['hasync'])) {
         if (empty($hasync['username']) || empty($hasync['password'])) {
             throw new RuntimeException('one-shot HA synchronization requires locally configured HA credentials');
         }
-        // This local variable is not written to config.xml. Normal automatic
-        // Etna -> Rigi synchronization continues to use synchronizetoip.
+        // The core transfer uses this local copy; plugin callbacks call
+        // xmlrpc_execute(), which must receive the same temporary peer.
+        // A process-local override avoids writing a secondary outbound target
+        // to config.xml or changing normal Etna -> Rigi automatic sync.
         $hasync['synchronizetoip'] = $one_shot_target;
+        $GLOBALS['opnsense_hasync_runtime_peer'] = $one_shot_target;
     }
 
     if (empty($hasync['synchronizetoip'])) {
