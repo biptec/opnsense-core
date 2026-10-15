@@ -227,7 +227,11 @@ class VipSettingsController extends ApiMutableModelControllerBase
 
             if ((string)$node->mode == 'carp') {
                 foreach ($this->getModel()->vip->iterateItems() as $vip) {
-                    if ((string)$vip->mode == 'ipalias' && (string)$vip->vhid == (string)$node->vhid) {
+                    if (
+                        (string)$vip->mode == 'ipalias' &&
+                        (string)$vip->vhid == (string)$node->vhid &&
+                        (string)$vip->interface == (string)$node->interface
+                    ) {
                         $vhid = (string)$node->vhid;
                         throw new UserException(
                             sprintf(
