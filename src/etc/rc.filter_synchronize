@@ -273,6 +273,39 @@ function ha_sync_callback(array $sync_item, string $hook): void
     }
 }
 
+function ha_sync_sections(array $selected_syncitems): array
+{
+    $sections = [];
+    foreach ($selected_syncitems as $sync_item) {
+        foreach (array_filter(explode(',', $sync_item['section'] ?? '')) as $section) {
+            $sections[] = $section;
+        }
+    }
+    return array_values(array_unique($sections));
+}
+
+function ha_sync_restart_services($client, ?array $services_to_restart): void
+{
+    if ($services_to_restart !== null) {
+        $services_to_restart = array_values(array_unique($services_to_restart));
+        if (count($services_to_restart) === 0) {
+            return;
+        }
+    }
+
+    $client->query('opnsense.configd_reload_all_templates', []);
+    if ($client->query('opnsense.list_services', [])) {
+        foreach ($client->getResponse() as $service) {
+            if ($services_to_restart === null || in_array($service['name'], $services_to_restart, true)) {
+                $client->query('opnsense.restart_service', [
+                    "service" => $service['name'],
+                    "id" => isset($service['id']) ? $service['name'] : ""
+                ]);
+            }
+        }
+    }
+}
+
 if (!empty($config['hasync'])) {
     $hasync = $config['hasync'];
     $enable_debug = in_array('debug', $argv);
@@ -384,14 +417,10 @@ if (!empty($config['hasync'])) {
         $syncitems = $enabled_syncitems;
     }
 
-    $sections = [];
     $selected_syncitems = [];
     foreach ($available_syncitems as $cnf_key => $cnf) {
         if (in_array($cnf_key, $syncitems, true)) {
             $selected_syncitems[$cnf_key] = $cnf;
-            foreach (array_filter(explode(',', $cnf['section'] ?? '')) as $section) {
-                $sections[] = $section;
-            }
         }
     }
 
@@ -408,62 +437,85 @@ if (!empty($config['hasync'])) {
     foreach ($selected_syncitems as $sync_item) {
         ha_sync_callback($sync_item, 'sync_validate');
     }
-    foreach ($selected_syncitems as $sync_item) {
-        ha_sync_callback($sync_item, 'sync_prepare');
+
+    /*
+     * Keep shared CARP VIPs as the final activation phase. A receiver may be a
+     * freshly rebuilt router whose synchronized interfaces, aliases, firewall
+     * rules, routes, users, and HAProxy objects are not active yet. Activating
+     * a synchronized CARP VIP first can move traffic to that receiver before
+     * it is ready and disconnect the very operator performing the recovery.
+     */
+    $pre_vip_syncitems = $selected_syncitems;
+    $vip_syncitems = [];
+    if (isset($pre_vip_syncitems['virtualip'])) {
+        $vip_syncitems['virtualip'] = $pre_vip_syncitems['virtualip'];
+        unset($pre_vip_syncitems['virtualip']);
+    }
+    $sync_phases = [];
+    if (count($pre_vip_syncitems) > 0) {
+        $sync_phases[] = $pre_vip_syncitems;
+    }
+    if (count($vip_syncitems) > 0) {
+        $sync_phases[] = $vip_syncitems;
     }
 
     $client = new SimpleXMLRPC_Client($synchronizeto, 240);
     $client->debug = $enable_debug;
     $client->setCredentials($username, $hasync['password']);
-    if (count($sections) > 0) {
-        carp_sync_xml($synchronizeto, $username, $hasync['password'], array_values(array_unique($sections)), $enable_debug);
-        if ($requested_syncitems !== null) {
-            $configured = $client->query("opnsense.filter_configure", $syncitems);
-        } else {
-            $configured = $client->query("opnsense.filter_configure");
-        }
-        if ($configured) {
-            $response = $client->getResponse();
-        } else {
-            // propagate error to log
-            log_msg("An error occurred while attempting XMLRPC sync with username {$username} and {$url} " . $client->error, LOG_ERR);
-            // print communication details on failure
-            echo $client->getDetails();
-            return false;
+
+    foreach ($sync_phases as $phase_syncitems) {
+        $phase_names = array_keys($phase_syncitems);
+        log_msg(sprintf('HA synchronization phase: %s', implode(',', $phase_names)));
+
+        foreach ($phase_syncitems as $sync_item) {
+            ha_sync_callback($sync_item, 'sync_prepare');
         }
 
-        if (!is_array($response) && trim($response) == "Authentication failed") {
-            log_msg("An authentication failure occurred while trying to access {$url}.", LOG_ERR);
-            exit;
+        $sections = ha_sync_sections($phase_syncitems);
+        if (count($sections) > 0) {
+            carp_sync_xml($synchronizeto, $username, $hasync['password'], $sections, $enable_debug);
+            if ($requested_syncitems !== null) {
+                $configured = $client->query("opnsense.filter_configure", $phase_names);
+            } else {
+                $configured = $client->query("opnsense.filter_configure");
+            }
+            if ($configured) {
+                $response = $client->getResponse();
+            } else {
+                // propagate error to log
+                log_msg("An error occurred while attempting XMLRPC sync with username {$username} and {$url} " . $client->error, LOG_ERR);
+                // print communication details on failure
+                echo $client->getDetails();
+                return false;
+            }
+
+            if (!is_array($response) && trim($response) == "Authentication failed") {
+                log_msg("An authentication failure occurred while trying to access {$url}.", LOG_ERR);
+                exit;
+            }
         }
-    }
 
-    foreach ($selected_syncitems as $sync_item) {
-        ha_sync_callback($sync_item, 'sync_finalize');
-    }
+        foreach ($phase_syncitems as $sync_item) {
+            ha_sync_callback($sync_item, 'sync_finalize');
+        }
 
-    if ($restart_services) {
-        $services_to_restart = null;
-        if ($requested_syncitems !== null) {
+        /*
+         * Selective one-shot synchronization knows the exact services owned by
+         * this phase, so make them ready before a later virtualip phase can
+         * transfer traffic. Legacy full synchronization keeps its historical
+         * all-services restart after every phase has completed.
+         */
+        if ($restart_services && $requested_syncitems !== null) {
             $services_to_restart = [];
-            foreach ($selected_syncitems as $sync_item) {
+            foreach ($phase_syncitems as $sync_item) {
                 $services_to_restart = array_merge($services_to_restart, $sync_item['services'] ?? []);
             }
-            $services_to_restart = array_values(array_unique($services_to_restart));
+            ha_sync_restart_services($client, $services_to_restart);
         }
-        if ($services_to_restart === null || count($services_to_restart) > 0) {
-            $client->query('opnsense.configd_reload_all_templates', []);
-            if ($client->query('opnsense.list_services', [])) {
-                foreach ($client->getResponse() as $service) {
-                    if ($services_to_restart === null || in_array($service['name'], $services_to_restart, true)) {
-                        $client->query('opnsense.restart_service', [
-                            "service" => $service['name'],
-                            "id" => isset($service['id']) ? $service['name'] : ""
-                        ]);
-                    }
-                }
-            }
-        }
+    }
+
+    if ($restart_services && $requested_syncitems === null) {
+        ha_sync_restart_services($client, null);
     }
 
     log_msg("Filter sync successfully completed with {$synchronizeto}.");
