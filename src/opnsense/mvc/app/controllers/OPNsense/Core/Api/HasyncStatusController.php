@@ -142,14 +142,16 @@ class HasyncStatusController extends ApiControllerBase
         if (!$this->request->isGet()) {
             return ['status' => 'failed', 'message' => 'GET required'];
         }
-        $model = new Hasync();
-        $target = trim((string)$model->pfsyncpeerip);
-        if ($target !== '' && filter_var($target, FILTER_VALIDATE_IP) === false) {
-            return ['status' => 'failed', 'message' => 'HA pfsync peer is not a valid IP address'];
+        $result = json_decode((new Backend())->configdRun('system ha exec get_peer'), true);
+        if (!is_array($result) || ($result['status'] ?? '') !== 'ok') {
+            return [
+                'status' => 'failed',
+                'message' => is_array($result) ? trim((string)($result['message'] ?? 'unable to read HA pfsync peer')) : 'invalid HA peer response',
+            ];
         }
         return [
             'status' => 'ok',
-            'target' => $target,
+            'target' => trim((string)($result['target'] ?? '')),
             'items' => $this->selectedSyncItems(),
         ];
     }
@@ -175,15 +177,14 @@ class HasyncStatusController extends ApiControllerBase
             }
         }
 
-        // One-time peer selection is explicitly restricted to the HA pfsync
-        // neighbor, not any remote URL. This prevents forwarding HA credentials
-        // to untrusted destinations.
+        // The privileged backend is the single authority for one-shot peer
+        // selection. It validates this IP against raw config.xml immediately
+        // before invoking filter sync_peer, which is the same path used by the
+        // working configctl command. Do not duplicate the peer comparison in
+        // the MVC layer: model normalization must not disagree with execution.
         $target = trim((string)$this->request->getPost('target', 'string', ''));
-        if ($target !== '') {
-            $allowed = trim((string)(new Hasync())->pfsyncpeerip);
-            if ($allowed === '' || filter_var($allowed, FILTER_VALIDATE_IP) === false || $target !== $allowed) {
-                return ['status' => 'failed', 'message' => 'target must equal the configured HA pfsync peer'];
-            }
+        if ($target !== '' && filter_var($target, FILTER_VALIDATE_IP) === false) {
+            return ['status' => 'failed', 'message' => 'HA synchronization target must be a valid IP address'];
         }
         $result = json_decode(
             (new Backend())->configdpRun('system ha exec', ['exec_sync', implode(',', $requested), $target], false, 300),

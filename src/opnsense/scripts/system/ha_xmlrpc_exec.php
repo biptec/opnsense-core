@@ -60,6 +60,14 @@ try {
                 'value' => (string)($config['hasync']['local_endpoint_carp_advskew'] ?? ''),
             ]);
             break;
+        case 'get_peer':
+            global $config;
+            $target = trim((string)($config['hasync']['pfsyncpeerip'] ?? ''));
+            if ($target !== '' && filter_var($target, FILTER_VALIDATE_IP) === false) {
+                throw new \RuntimeException('HA pfsync peer is not a valid IP address');
+            }
+            echo json_encode(['status' => 'ok', 'target' => $target]);
+            break;
         case 'set_local_carp_skew':
             global $config;
             if (!preg_match('/^(0|[1-9][0-9]{0,2})$/D', $service) || (int)$service > 254 ||
