@@ -39,6 +39,25 @@ class OneShotHASyncContract(unittest.TestCase):
         self.assertIn("one_shot_sync_items", view)
         self.assertIn("ajaxCall('/api/core/hasync_status/sync', {items: items, target: target}", view)
 
+    def test_virtualip_is_always_the_final_sync_phase(self):
+        rc = (SRC / "etc/rc.filter_synchronize").read_text()
+        self.assertIn("$pre_vip_syncitems = $selected_syncitems;", rc)
+        self.assertIn("$vip_syncitems['virtualip'] = $pre_vip_syncitems['virtualip'];", rc)
+        self.assertIn("unset($pre_vip_syncitems['virtualip']);", rc)
+        self.assertIn("$sync_phases[] = $pre_vip_syncitems;", rc)
+        self.assertIn("$sync_phases[] = $vip_syncitems;", rc)
+
+        phase_loop = rc.split("foreach ($sync_phases as $phase_syncitems)", 1)[1]
+        prepare = phase_loop.index("ha_sync_callback($sync_item, 'sync_prepare')")
+        transfer = phase_loop.index("carp_sync_xml(")
+        configure = phase_loop.index('$client->query("opnsense.filter_configure", $phase_names)')
+        finalize = phase_loop.index("ha_sync_callback($sync_item, 'sync_finalize')")
+        restart = phase_loop.index("ha_sync_restart_services($client, $services_to_restart)")
+        self.assertLess(prepare, transfer)
+        self.assertLess(transfer, configure)
+        self.assertLess(configure, finalize)
+        self.assertLess(finalize, restart)
+
     def test_node_local_skew_is_operator_configurable(self):
         model = (SRC / "opnsense/mvc/app/models/OPNsense/Core/Hasync.xml").read_text()
         self.assertIn('local_endpoint_carp_advskew type="IntegerField"', model)
