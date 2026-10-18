@@ -154,7 +154,9 @@ function ha_sync_guard_bootstrap_routes(array &$incoming, array $local, bool $re
     if (!array_key_exists('staticroutes', $incoming)) {
         return 0;
     }
-    if (!is_array($incoming['staticroutes'])) {
+    if ($incoming['staticroutes'] === null || $incoming['staticroutes'] === '') {
+        $incoming['staticroutes'] = ['route' => []];
+    } elseif (!is_array($incoming['staticroutes'])) {
         throw new RuntimeException('invalid HA staticroutes section');
     }
     $incomingRows = ha_sync_route_rows($incoming['staticroutes']['route'] ?? []);
