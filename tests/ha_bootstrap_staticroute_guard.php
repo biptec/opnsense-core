@@ -100,6 +100,16 @@ $noSection = ['filter' => ['rule' => []]];
 check_same(0, ha_sync_guard_bootstrap_routes($noSection, $etna), 'unselected staticroutes untouched');
 check_same(['filter' => ['rule' => []]], $noSection, 'no phantom staticroutes category introduced');
 
+$emptySection = ['staticroutes' => ''];
+check_same(0, ha_sync_guard_bootstrap_routes($emptySection, $etna), 'empty staticroutes section means no routes');
+check_same(['staticroutes' => ['route' => []]], $emptySection,
+    'empty staticroutes section is normalized for last-route deletion sync');
+
+$nullSection = ['staticroutes' => null];
+check_same(0, ha_sync_guard_bootstrap_routes($nullSection, $etna), 'null staticroutes section means no routes');
+check_same(['staticroutes' => ['route' => []]], $nullSection,
+    'null staticroutes section is normalized for last-route deletion sync');
+
 $badPayload = ['staticroutes' => 'bad'];
 check_error(fn() => ha_sync_guard_bootstrap_routes($badPayload, $etna),
     'invalid payload must fail closed');

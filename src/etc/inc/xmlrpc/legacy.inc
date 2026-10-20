@@ -320,6 +320,10 @@ function ha_xmlrpc_apply_routing_diff(array $old_config, array $new_config)
 
     if (!empty($interfaces)) {
         system_routing_configure(false, array_keys($interfaces));
+        // Native HA-owned staticroutes/gateways can change plugin-derived
+        // dynamic-routing exports. Keep Core generic: plugins decide whether
+        // this hook requires any action.
+        plugins_configure('staticroutes');
     }
 }
 
