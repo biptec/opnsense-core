@@ -32,6 +32,7 @@ require_once 'util.inc';
 require_once 'system.inc';
 require_once 'interfaces.inc';
 require_once 'filter.inc';
+require_once 'plugins.inc';
 
 exit_on_bootup();
 
@@ -67,6 +68,11 @@ foreach (glob("/tmp/delete_route_*.todo") as $filename) {
 
 /* routing is not allowed to restart monitors when extended hook is requested */
 system_routing_configure(true, $selected ? $interface_map : null, !$monitor_hook);
+
+if (!$monitor_hook) {
+    // Native static-route changes may alter plugin-derived dynamic-routing exports.
+    plugins_configure('staticroutes', true);
+}
 
 if ($monitor_hook) {
     pass_safe('/usr/local/etc/rc.syshook monitor %s', $monitor_gws);
