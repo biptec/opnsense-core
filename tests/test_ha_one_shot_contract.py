@@ -58,6 +58,72 @@ class OneShotHASyncContract(unittest.TestCase):
         self.assertLess(configure, finalize)
         self.assertLess(finalize, restart)
 
+    def test_deferred_sync_keeps_manual_target_strict(self):
+        controller = (SRC / "opnsense/mvc/app/controllers/OPNsense/Core/Api/HasyncStatusController.php").read_text()
+        self.assertIn("configdpRun('system ha deferred_enqueue'", controller)
+        self.assertIn("configdpRun('system ha exec', ['exec_sync', implode(',', $requested), $target]", controller)
+        self.assertIn("'deferred' => !empty($result['deferred'])", controller)
+
+        actions = (SRC / "opnsense/service/conf/actions.d/actions_system.conf").read_text()
+        self.assertIn("[ha.deferred_enqueue]", actions)
+        self.assertIn("[ha.deferred_reconcile]", actions)
+
+        filter_actions = (SRC / "opnsense/service/conf/actions.d/actions_filter.conf").read_text()
+        self.assertIn("[sync_deferred]", filter_actions)
+        self.assertIn("defer_peer_unavailable", filter_actions)
+        strict_block = filter_actions.split("[sync_selected]", 1)[1].split("[sync_deferred]", 1)[0]
+        self.assertNotIn("defer_peer_unavailable", strict_block)
+
+    def test_deferred_sync_is_durable_locked_and_snapshot_based(self):
+        helper_path = SRC / "opnsense/scripts/system/ha_deferred_sync.php"
+        helper = helper_path.read_text()
+        self.assertTrue(helper_path.stat().st_mode & 0o100)
+        self.assertIn("'/var/db/hasync_deferred.json'", helper)
+        self.assertIn("'/var/run/hasync_deferred.lock'", helper)
+        self.assertIn("LOCK_EX | LOCK_NB", helper)
+        self.assertIn("array_unique(array_merge($pending, $requested))", helper)
+        self.assertIn("tempnam(dirname(HASYNC_DEFERRED_STATE)", helper)
+        self.assertIn("rename($temporary, HASYNC_DEFERRED_STATE)", helper)
+        self.assertIn("!chmod($temporary, 0600)", helper)
+        self.assertIn("!unlink(HASYNC_DEFERRED_STATE)", helper)
+        self.assertIn("require_once('script/load_phalcon.php')", helper)
+        self.assertIn("use OPNsense\\Core\\Backend;", helper)
+        self.assertIn("(new Backend())->configdpRun('filter sync_deferred'", helper)
+        self.assertNotIn("configdp_run(", helper)
+        self.assertIn("$result === 'peer_unavailable'", helper)
+        self.assertIn("hasync_deferred_store([])", helper)
+        self.assertNotIn("generation", helper)
+        self.assertNotIn("endpoint", helper)
+
+        cron = (SRC / "etc/cron.d/hasync_deferred").read_text()
+        self.assertIn("configctl -d system ha deferred_reconcile", cron)
+
+    def test_peer_unavailable_is_typed_without_hiding_tls_or_auth_errors(self):
+        client = (SRC / "etc/inc/XMLRPC_Client.inc").read_text()
+        self.assertIn("public $curl_error_code = 0", client)
+        self.assertIn("$this->curl_error_code = curl_errno($ch)", client)
+        self.assertIn("curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);", client)
+
+        rc = (SRC / "etc/rc.filter_synchronize").read_text()
+        self.assertIn("$timeout = $defer_peer_unavailable ? 5 : 60;", rc)
+        self.assertIn("new SimpleXMLRPC_Client($url, $timeout)", rc)
+        for error_name in (
+            "CURLE_COULDNT_CONNECT",
+            "CURLE_OPERATION_TIMEDOUT",
+        ):
+            self.assertIn(error_name, rc)
+        peer_block = rc.split("$peer_unavailable = in_array", 1)[1].split("], true);", 1)[0]
+        for strict_error in (
+            "CURLE_GOT_NOTHING",
+            "CURLE_SEND_ERROR",
+            "CURLE_RECV_ERROR",
+            "CURLE_SSL_CONNECT_ERROR",
+            "CURLE_PEER_FAILED_VERIFICATION",
+        ):
+            self.assertNotIn(strict_error, peer_block)
+        self.assertIn("return 'failed';", rc)
+        self.assertIn('"Authentication failed"', rc)
+
     def test_node_local_skew_is_operator_configurable(self):
         model = (SRC / "opnsense/mvc/app/models/OPNsense/Core/Hasync.xml").read_text()
         self.assertIn('local_endpoint_carp_advskew type="IntegerField"', model)
