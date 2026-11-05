@@ -185,6 +185,25 @@ class HasyncStatusController extends ApiControllerBase
                 return ['status' => 'failed', 'message' => 'target must equal the configured HA pfsync peer'];
             }
         }
+        if ($target === '') {
+            $result = json_decode(
+                (new Backend())->configdpRun('system ha deferred_enqueue', [implode(',', $requested)], false, 300),
+                true
+            );
+            if (!is_array($result) || ($result['status'] ?? '') !== 'ok') {
+                return [
+                    'status' => 'failed',
+                    'message' => is_array($result) ? trim((string)($result['message'] ?? 'HA synchronization failed')) : 'invalid HA synchronization response',
+                ];
+            }
+            return [
+                'status' => 'ok',
+                'items' => $requested,
+                'target' => '',
+                'deferred' => !empty($result['deferred']),
+            ];
+        }
+
         $result = json_decode(
             (new Backend())->configdpRun('system ha exec', ['exec_sync', implode(',', $requested), $target], false, 300),
             true

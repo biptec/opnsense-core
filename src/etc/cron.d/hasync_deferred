@@ -1,0 +1,5 @@
+SHELL=/bin/sh
+PATH=/etc:/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin
+MAILTO=
+
+* * * * * root /usr/local/sbin/configctl -d system ha deferred_reconcile

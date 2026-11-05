@@ -110,29 +110,38 @@ function get_vip_config_section(): array
  * @param string $username remote username
  * @param string $password remote password
  * @param boolean $debug enable debug output
- * @return boolean
+ * @param boolean $defer_peer_unavailable return a compact status for expected peer unavailability
+ * @return string one of ok, peer_unavailable, failed
  */
-function carp_check_version($url, $username, $password, $debug = false)
+function carp_check_version($url, $username, $password, $debug = false, $defer_peer_unavailable = false)
 {
-    $client = new SimpleXMLRPC_Client($url, 240);
+    $timeout = $defer_peer_unavailable ? 5 : 60;
+    $client = new SimpleXMLRPC_Client($url, $timeout);
     $client->debug = $debug;
     $client->setCredentials($username, $password);
     if ($client->query('opnsense.firmware_version')) {
         $remote_version = $client->getResponse();
     } else {
-        // propagate error to log
-        log_msg("An error occurred while attempting XMLRPC sync with username {$username} and {$url} " . $client->error, LOG_ERR);
-        // print communication details on failure
-        echo $client->getDetails();
-        return false;
+        $peer_unavailable = in_array($client->curl_error_code, [
+            CURLE_COULDNT_CONNECT,
+            CURLE_OPERATION_TIMEDOUT,
+        ], true);
+        if (!$peer_unavailable || !$defer_peer_unavailable) {
+            log_msg("An error occurred while attempting XMLRPC sync with username {$username} and {$url} " . $client->error, LOG_ERR);
+        }
+        if (!$defer_peer_unavailable) {
+            // print communication details on failure for legacy/manual callers
+            echo $client->getDetails();
+        }
+        return $peer_unavailable ? 'peer_unavailable' : 'failed';
     }
 
     if (!is_array($remote_version) && trim($remote_version) == "Authentication failed") {
         log_msg("An authentication failure occurred while trying to access {$url} (opnsense.firmware_version).", LOG_ERR);
-        return false;
+        return 'failed';
     }
 
-    return true;
+    return 'ok';
 }
 
 /**
@@ -238,7 +247,7 @@ function carp_sync_xml($url, $username, $password, $sections, $debug)
         }
     }
 
-    $client = new SimpleXMLRPC_Client($url,240);
+    $client = new SimpleXMLRPC_Client($url,60);
     $client->debug = $debug;
     $client->setCredentials($username, $password);
     if ($client->query('opnsense.restore_config_section', $transport_data)) {
@@ -311,6 +320,7 @@ if (!empty($config['hasync'])) {
     $enable_debug = in_array('debug', $argv);
     $restart_services = in_array('restart_services', $argv);
     $pre_check_master = in_array('pre_check_master', $argv);
+    $defer_peer_unavailable = in_array('defer_peer_unavailable', $argv);
     $requested_syncitems = null;
     $one_shot_target = null;
     foreach ($argv as $argument) {
@@ -336,6 +346,7 @@ if (!empty($config['hasync'])) {
         echo "pre_check_master - exit when carp is not in master mode\n";
         echo "syncitems - synchronize only listed items enabled in High Availability settings\n";
         echo "peertarget - select the configured pfsync peer for this one run; never persists in config\n";
+        echo "defer_peer_unavailable - return a machine-readable peer_unavailable status for deferred retry\n";
         exit;
     }
 
@@ -430,7 +441,17 @@ if (!empty($config['hasync'])) {
     }
 
     $username = empty($hasync['username']) ? "root" : $hasync['username'];
-    if (!carp_check_version($synchronizeto, $username, $hasync['password'], $enable_debug)) {
+    $version_status = carp_check_version(
+        $synchronizeto,
+        $username,
+        $hasync['password'],
+        $enable_debug,
+        $defer_peer_unavailable
+    );
+    if ($version_status !== 'ok') {
+        if ($defer_peer_unavailable) {
+            echo "{$version_status}\n";
+        }
         exit;
     }
 
@@ -459,7 +480,7 @@ if (!empty($config['hasync'])) {
         $sync_phases[] = $vip_syncitems;
     }
 
-    $client = new SimpleXMLRPC_Client($synchronizeto, 240);
+    $client = new SimpleXMLRPC_Client($synchronizeto, 60);
     $client->debug = $enable_debug;
     $client->setCredentials($username, $hasync['password']);
 

@@ -81,7 +81,7 @@ function xmlrpc_execute($method, $params = [], $debug = false)
         }
 
         $username = empty($hasync['username']) ? "root" : $hasync['username'];
-        $client = new SimpleXMLRPC_Client($synchronizeto, 240);
+        $client = new SimpleXMLRPC_Client($synchronizeto, 60);
         $client->debug = $debug;
         $client->setCredentials($username, $hasync['password']);
         if ($client->query($method, $params)) {
@@ -123,6 +123,12 @@ class SimpleXMLRPC_Client
      * @var null
      */
     public $error = null;
+
+    /**
+     * cURL transport error code from the last request
+     * @var int
+     */
+    public $curl_error_code = 0;
 
     /**
      * request timeout
@@ -182,6 +188,7 @@ class SimpleXMLRPC_Client
     {
         /* XXX: xmlrpc is legacy, callers always import legacy config */
         global $config;
+        $this->curl_error_code = 0;
         $tls_verify = !empty($config['hasync']) && !empty($config['hasync']['verifypeer']);
 
         // create xmlrpc request object
@@ -200,7 +207,7 @@ class SimpleXMLRPC_Client
 
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $this->url);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $this->timeout);
         if (!$tls_verify) {
             curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
             curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0);
@@ -215,6 +222,7 @@ class SimpleXMLRPC_Client
             print_r(curl_getinfo($ch));
         }
         if ($this->response_received === false) {
+            $this->curl_error_code = curl_errno($ch);
             $this->error = 'fetch error. remote host down? (' . curl_error($ch) . ')';
             return false;
         }
