@@ -379,7 +379,8 @@ function plugins_xmlrpc_sync()
                 $has_sync_handler = !empty($helper['section']) ||
                     !empty($helper['sync_validate']) ||
                     !empty($helper['sync_prepare']) ||
-                    !empty($helper['sync_finalize']);
+                    !empty($helper['sync_finalize']) ||
+                    !empty($helper['sync_activate']);
                 if (!empty($helper['id']) && $has_sync_handler) {
                     $sync_settings[$helper['id']] = $helper;
                     $sync_settings[$helper['id']]['section'] = $helper['section'] ?? '';

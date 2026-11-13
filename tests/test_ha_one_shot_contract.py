@@ -58,6 +58,20 @@ class OneShotHASyncContract(unittest.TestCase):
         self.assertLess(configure, finalize)
         self.assertLess(finalize, restart)
 
+        late_activate = rc.index("ha_sync_callback($sync_item, 'sync_activate')")
+        legacy_restart = rc.index("if ($restart_services && $requested_syncitems === null)")
+        success = rc.index('log_msg("Filter sync successfully completed with {$synchronizeto}.")')
+        self.assertGreater(late_activate, restart)
+        self.assertLess(late_activate, legacy_restart)
+        self.assertLess(legacy_restart, success)
+
+    def test_plugins_can_register_post_phase_activation_hooks(self):
+        plugins = (SRC / "etc/inc/plugins.inc").read_text()
+        self.assertIn("!empty($helper['sync_activate'])", plugins)
+        rc = (SRC / "etc/rc.filter_synchronize").read_text()
+        self.assertIn("ha_sync_callback($sync_item, 'sync_activate')", rc)
+        self.assertEqual(rc.count("ha_sync_callback($sync_item, 'sync_activate')"), 1)
+
     def test_deferred_sync_keeps_manual_target_strict(self):
         controller = (SRC / "opnsense/mvc/app/controllers/OPNsense/Core/Api/HasyncStatusController.php").read_text()
         self.assertIn("configdpRun('system ha deferred_enqueue'", controller)

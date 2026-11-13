@@ -535,6 +535,17 @@ if (!empty($config['hasync'])) {
         }
     }
 
+    /*
+     * Activation hooks run only after every native synchronization phase has
+     * completed. This is distinct from phase-local sync_finalize: consumers
+     * such as HAProxy may persist configuration in a pre-VIP phase but cannot
+     * safely activate listeners until the final virtualip phase has made the
+     * receiver-local bind addresses available.
+     */
+    foreach ($selected_syncitems as $sync_item) {
+        ha_sync_callback($sync_item, 'sync_activate');
+    }
+
     if ($restart_services && $requested_syncitems === null) {
         ha_sync_restart_services($client, null);
     }
